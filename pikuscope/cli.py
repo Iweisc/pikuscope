@@ -118,8 +118,64 @@ def main(argv: list[str] | None = None) -> int:
     rv.add_argument("--json-out", default=None, help="write structured result to file")
     rv.set_defaults(func=cmd_review)
 
+    sv = sub.add_parser("serve", help="run webhook server (GitHub App / webhook mode)")
+    sv.add_argument("--port", type=int, default=8080)
+    sv.add_argument("--secret", default=None, help="webhook secret")
+    sv.add_argument("--clone-root", default="/tmp/pikuscope-clones")
+    sv.set_defaults(func=cmd_serve)
+
+    dc = sub.add_parser("docstrings", help="suggest docstrings for a PR's changed functions")
+    dc.add_argument("--repo", required=True)
+    dc.add_argument("--pr", type=int, required=True)
+    dc.add_argument("--clone-dir", default=None)
+    dc.add_argument("--cache-dir", default=".pikuscope-cache")
+    dc.add_argument("--effort", default=None)
+    dc.add_argument("--profile", default=None)
+    dc.set_defaults(func=cmd_docstrings)
+
+    ch = sub.add_parser("ask", help="ask a question about a PR")
+    ch.add_argument("--repo", required=True)
+    ch.add_argument("--pr", type=int, required=True)
+    ch.add_argument("--clone-dir", default=None)
+    ch.add_argument("--cache-dir", default=".pikuscope-cache")
+    ch.add_argument("--effort", default=None)
+    ch.add_argument("--profile", default=None)
+    ch.add_argument("question")
+    ch.set_defaults(func=cmd_ask)
+
     args = ap.parse_args(argv)
     return args.func(args)
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .app import serve
+
+    serve(args.port, args.secret, args.clone_root)
+    return 0
+
+
+def cmd_docstrings(args: argparse.Namespace) -> int:
+    from .docstrings import generate_docstrings
+
+    gh = GitHub(cache_dir=args.cache_dir)
+    repo = Repo(gh, args.repo)
+    pr = repo.pr(args.pr)
+    reviewer = build_reviewer(args, repo, pr)
+    docs = generate_docstrings(reviewer.llm, reviewer.ctx, repo.pr_diff(args.pr))
+    for d in docs:
+        print(f"--- {d['path']}:{d['insert_before_line']}\n{d['text']}\n")
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    from .commands import answer_chat
+
+    gh = GitHub(cache_dir=args.cache_dir)
+    repo = Repo(gh, args.repo)
+    pr = repo.pr(args.pr)
+    reviewer = build_reviewer(args, repo, pr)
+    print(answer_chat(reviewer.llm, reviewer.ctx, repo, pr, args.question))
+    return 0
 
 
 if __name__ == "__main__":

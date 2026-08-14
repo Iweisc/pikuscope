@@ -1,0 +1,24 @@
+# pikuscope configuration — full reference (CodeRabbit .coderabbit.yaml parity)
+# Place as .pikuscope.yaml in your repo root.
+
+tone_instructions: ""          # e.g. "Be terse. Address the author as 'chief'."
+
+reviews:
+  profile: chill               # chill | assertive
+  high_level_summary: true
+  sequence_diagrams: true
+  collapse_walkthrough: false
+  poem: false
+  review_status: true
+  path_filters:                # gitignore-style; ! re-includes
+    - "!**/*.test.ts"
+    - "**/fixtures/**"
+  path_instructions:
+    - path: "apps/mobile/**"
+      instructions: "Watch for platform-specific (iOS/Android) behavior divergence."
+    - path: "**/*.sql"
+      instructions: "Check migrations for backwards compatibility."
+
+fail_on: []                    # e.g. ["critical"] to fail CI on critical findings
+max_findings: 25
+confidence_threshold: 0.6

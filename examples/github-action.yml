@@ -1,0 +1,39 @@
+name: pikuscope review
+# GitHub Action mode: add this workflow to any repo to get pikuscope reviews.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@pikuscope'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Iweisc/pikuscope
+          path: pikuscope
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ./pikuscope
+      - name: Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PIKUSCOPE_BASE_URL: ${{ secrets.PIKUSCOPE_BASE_URL }}
+          PIKUSCOPE_API_KEY: ${{ secrets.PIKUSCOPE_API_KEY }}
+          PIKUSCOPE_MODEL: ${{ vars.PIKUSCOPE_MODEL || 'gpt-5.6-sol' }}
+          PIKUSCOPE_REASONING_EFFORT: ${{ vars.PIKUSCOPE_REASONING_EFFORT || 'xhigh' }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          pikuscope review --repo "${{ github.repository }}" --pr "$PR_NUMBER" \
+            --clone-dir /tmp/pikuscope-clone --post
