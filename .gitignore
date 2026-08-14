@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pikuscope-cache/
+bench/cache/
+bench/runs/
+bench/repos/
+dist/
+*.egg-info/
+.pytest_cache/
