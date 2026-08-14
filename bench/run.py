@@ -48,7 +48,7 @@ def ensure_base(repo_dir: Path, base_sha: str) -> None:
         subprocess.run(["git", "fetch", "origin", base_sha], cwd=repo_dir, capture_output=True)
 
 
-def run_one(entry: dict, run_dir: Path, effort: str) -> dict:
+def run_one(entry: dict, run_dir: Path, effort: str, learnings: list[str] | None = None) -> dict:
     pr_num = entry["pr"]
     out_path = run_dir / f"pr-{pr_num}.json"
     if out_path.exists():
@@ -75,7 +75,7 @@ def run_one(entry: dict, run_dir: Path, effort: str) -> dict:
     cfg = Config()
     reviewer = Reviewer(llm, ctx, cfg)
     try:
-        rr = reviewer.review(pr_meta, diff_text)
+        rr = reviewer.review(pr_meta, diff_text, learnings=learnings)
         result = {
             "pr": pr_num,
             "review_sha": review_sha,
@@ -101,7 +101,13 @@ def main() -> None:
     ap.add_argument("--effort", default="xhigh")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--learnings", default=None,
+                    help="path to learnings.jsonl to inject into reviews")
     args = ap.parse_args()
+
+    learnings: list[str] | None = None
+    if args.learnings:
+        learnings = [json.loads(l)["text"] for l in Path(args.learnings).read_text().splitlines()]
 
     entries = [json.loads(l) for l in DATA.read_text().splitlines()]
     if args.prs:
@@ -115,7 +121,7 @@ def main() -> None:
 
     done = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futs = {pool.submit(run_one, e, run_dir, args.effort): e for e in entries}
+        futs = {pool.submit(run_one, e, run_dir, args.effort, learnings): e for e in entries}
         for fut in as_completed(futs):
             e = futs[fut]
             done += 1
