@@ -154,8 +154,16 @@ def score(run_name: str, refresh: bool = False) -> None:
             label = g.get("reception", "unclear")
             strength = m.get("match_strength", "none")
             was_dropped = bool(m.get("candidate_dropped"))
-            hit = strength in ("exact", "partial") and not was_dropped
-            dropped_hit = strength in ("exact", "partial") and was_dropped
+            # A candidate dropped as "duplicate" means a reported finding shares its root
+            # cause — matching the dropped twin still counts as a hit.
+            dup_of_reported = False
+            if was_dropped and m.get("candidate_index") is not None:
+                di = int(m["candidate_index"]) - len(rr.get("findings", []))
+                dropped_list = rr.get("dropped", [])
+                if 0 <= di < len(dropped_list):
+                    dup_of_reported = dropped_list[di].get("verify_verdict") == "duplicate"
+            hit = strength in ("exact", "partial") and (not was_dropped or dup_of_reported)
+            dropped_hit = strength in ("exact", "partial") and was_dropped and not dup_of_reported
             bot = g["bot"]
             kind = g.get("kind", "actionable")
             is_substantive = kind in ("actionable", "comment") or bot != "coderabbit"
