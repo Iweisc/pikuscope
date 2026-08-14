@@ -133,6 +133,17 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--profile", default=None)
     dc.set_defaults(func=cmd_docstrings)
 
+    au = sub.add_parser("audit", help="audit other bots' review comments for false positives")
+    au.add_argument("--repo", required=True)
+    au.add_argument("--pr", type=int, required=True)
+    au.add_argument("--clone-dir", default=None)
+    au.add_argument("--cache-dir", default=".pikuscope-cache")
+    au.add_argument("--effort", default=None)
+    au.add_argument("--profile", default=None)
+    au.add_argument("--post", action="store_true", help="reply to suspected false positives")
+    au.add_argument("--json-out", default=None)
+    au.set_defaults(func=cmd_audit)
+
     ch = sub.add_parser("ask", help="ask a question about a PR")
     ch.add_argument("--repo", required=True)
     ch.add_argument("--pr", type=int, required=True)
@@ -164,6 +175,31 @@ def cmd_docstrings(args: argparse.Namespace) -> int:
     docs = generate_docstrings(reviewer.llm, reviewer.ctx, repo.pr_diff(args.pr))
     for d in docs:
         print(f"--- {d['path']}:{d['insert_before_line']}\n{d['text']}\n")
+    return 0
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    from .audit import audit_bot_comments, render_audit_reply
+
+    gh = GitHub(cache_dir=args.cache_dir)
+    repo = Repo(gh, args.repo)
+    pr = repo.pr(args.pr)
+    reviewer = build_reviewer(args, repo, pr)
+    audits = audit_bot_comments(reviewer.llm, reviewer.ctx, repo, pr)
+    if args.json_out:
+        Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json_out).write_text(json.dumps(audits, indent=2))
+    for a in audits:
+        print(f"[{a['verdict']} {a.get('confidence', 0):.0%}] {a['bot']} {a['path']}:{a['line']}")
+        print(f"  claim: {a['claim'][:150]}")
+        print(f"  audit: {a.get('explanation', '')[:300]}\n")
+    if args.post:
+        for a in audits:
+            if a["verdict"] == "false_positive" and a.get("confidence", 0) >= 0.7:
+                repo.gh.post(
+                    f"repos/{args.repo}/pulls/{args.pr}/comments/{a['comment_id']}/replies",
+                    {"body": render_audit_reply(a)},
+                )
     return 0
 
 
