@@ -352,10 +352,20 @@ class Reviewer:
         reviewable = [f for f in fds if self.cfg.is_reviewable(f.path) and not f.is_binary]
         result.skipped_files = [f.path for f in fds if f not in reviewable]
 
+        lint_hints: list[dict] = []
+        root = getattr(self.ctx, "root", None)
+        if root is not None:
+            try:
+                from .linters import run_linters
+
+                lint_hints = run_linters(root, [f.path for f in reviewable])
+            except Exception:  # noqa: BLE001 — linters are best-effort
+                lint_hints = []
+
         with ThreadPoolExecutor(max_workers=4) as pool:
             fut_summary = pool.submit(self._summarize, pr, fds)
             note(f"finding pass over {len(reviewable)} files")
-            candidates = self._find(pr, reviewable, learnings or [])
+            candidates = self._find(pr, reviewable, learnings or [], lint_hints)
             note(f"{len(candidates)} candidate findings; verifying")
             confirmed, dropped = self._verify(pr, reviewable, candidates)
             summary = fut_summary.result()
@@ -413,7 +423,7 @@ class Reviewer:
             return {}
 
     def _find(self, pr: dict[str, Any], fds: list[FileDiff],
-              learnings: list[str]) -> list[Finding]:
+              learnings: list[str], lint_hints: list[dict] | None = None) -> list[Finding]:
         batches = self._batch_files(fds)
         tree = file_tree_summary(self.ctx)
         handler = make_tool_handler(self.ctx)
@@ -437,9 +447,18 @@ class Reviewer:
                 if other_files
                 else ""
             )
+            lint_note = ""
+            if lint_hints:
+                batch_paths = {f.path for f in batch}
+                relevant = [h for h in lint_hints if h.get("path") in batch_paths][:40]
+                if relevant:
+                    lint_note = "\n# Static analysis hints (verify before trusting)\n" + "\n".join(
+                        f"- {h['tool']} {h['path']}:{h.get('line')} {h.get('code')}: {h['message'][:200]}"
+                        for h in relevant
+                    )
             user = (
                 f"{self._pr_header(pr)}\n\n{profile_note}{learn_note}\n\n"
-                f"# Repository layout\n{tree}\n{other_note}\n\n# Files to review\n\n"
+                f"# Repository layout\n{tree}\n{other_note}{lint_note}\n\n# Files to review\n\n"
                 + "\n\n".join(self._file_block(fd) for fd in batch)
             )
             system = FINDER_SYSTEM.replace("%LENS%", lens_text)

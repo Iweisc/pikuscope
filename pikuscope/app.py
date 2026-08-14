@@ -61,6 +61,47 @@ class App:
         else:
             repo.gh.post(f"repos/{repo.full}/issues/{number}/comments", {"body": body})
 
+    def _resolve_threads(self, repo: Repo, number: int) -> int:
+        """Resolve every unresolved review thread whose root comment is ours (GraphQL)."""
+        owner, name = repo.full.split("/")
+        q = """
+        query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
+          repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+            reviewThreads(first:100, after:$cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes { id isResolved comments(first:1) { nodes { body author { login } } } }
+        }}}}"""
+        cursor = None
+        thread_ids: list[str] = []
+        while True:
+            data = repo.gh.post(
+                "graphql",
+                {"query": q, "variables": {"owner": owner, "name": name,
+                                           "number": number, "cursor": cursor}},
+            )
+            pr_data = (((data or {}).get("data") or {}).get("repository") or {}).get("pullRequest") or {}
+            threads = (pr_data.get("reviewThreads") or {})
+            for node in threads.get("nodes") or []:
+                if node.get("isResolved"):
+                    continue
+                comments = ((node.get("comments") or {}).get("nodes")) or []
+                if comments and "pikuscope" in (comments[0].get("body") or ""):
+                    thread_ids.append(node["id"])
+            page = threads.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                break
+            cursor = page.get("endCursor")
+        mutation = """
+        mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { id } } }"""
+        resolved = 0
+        for tid in thread_ids:
+            try:
+                repo.gh.post("graphql", {"query": mutation, "variables": {"id": tid}})
+                resolved += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return resolved
+
     # ---------- actions ----------
 
     def review_pr(self, repo_full: str, number: int, incremental: bool = True) -> None:
@@ -155,9 +196,8 @@ class App:
             self._post_summary(repo, number, base + "\n" + PAUSED_MARK)
             reply("🚫 This PR will be ignored by pikuscope.")
         elif cmd == "resolve":
-            reviews = repo.pr_review_comments(number)
-            # resolving threads requires GraphQL; emulate by reacting + noting
-            reply("✅ Marked pikuscope threads as addressed.")
+            n = self._resolve_threads(repo, number)
+            reply(f"✅ Resolved {n} pikuscope review thread(s).")
         elif cmd == "remember":
             ctx, reviewer, store = self._ctx_and_reviewer(repo, pr)
             scope = "**"
