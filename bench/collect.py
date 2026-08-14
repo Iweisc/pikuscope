@@ -53,15 +53,16 @@ def clean_bot_body(body: str) -> str:
     return body.strip()
 
 
-def collect(repo_full: str, max_prs: int | None = None) -> None:
+def collect(repo_full: str, max_prs: int | None = None, direction: str = "asc",
+            out_name: str = "dataset.jsonl", skip_prs: set[int] | None = None) -> None:
     gh = GitHub(cache_dir=CACHE_DIR)
     repo = Repo(gh, repo_full)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("paginating all PR review comments...", file=sys.stderr)
+    print(f"paginating all PR review comments ({direction})...", file=sys.stderr)
     all_comments = gh.get_paginated(
         f"repos/{repo_full}/pulls/comments",
-        params={"sort": "created", "direction": "asc"},
+        params={"sort": "created", "direction": direction},
         max_pages=200,
     )
     print(f"{len(all_comments)} review comments total", file=sys.stderr)
@@ -74,12 +75,14 @@ def collect(repo_full: str, max_prs: int | None = None) -> None:
 
     candidates = []
     for pr_num, comments in sorted(by_pr.items()):
+        if skip_prs and pr_num in skip_prs:
+            continue
         bot_comments = [c for c in comments if c["user"]["login"] in BOT_USERS]
         if bot_comments:
             candidates.append((pr_num, comments, bot_comments))
     print(f"{len(candidates)} PRs with bot inline comments", file=sys.stderr)
 
-    out_path = DATA_DIR / "dataset.jsonl"
+    out_path = DATA_DIR / out_name
     entries = []
     for pr_num, comments, bot_comments in candidates:
         try:
@@ -186,12 +189,12 @@ Output ONLY JSON: {"labels": [{"id": <finding id>, "label": str, "confidence": 0
 """
 
 
-def label_fps(batch_size: int = 25, workers: int = 8) -> None:
+def label_fps(batch_size: int = 25, workers: int = 8, dataset: str = "dataset.jsonl") -> None:
     """LLM-label each finding's reception from dev interactions."""
     from concurrent.futures import ThreadPoolExecutor
 
     llm = LLMClient.from_env()
-    ds_path = DATA_DIR / "dataset.jsonl"
+    ds_path = DATA_DIR / dataset
     entries = [json.loads(l) for l in ds_path.read_text().splitlines()]
     todo = []
     for e in entries:
@@ -254,8 +257,18 @@ if __name__ == "__main__":
     ap.add_argument("--repo", default="pingdotgg/t3code")
     ap.add_argument("--max-prs", type=int, default=None)
     ap.add_argument("--label-fps", action="store_true")
+    ap.add_argument("--dataset", default="dataset.jsonl")
+    ap.add_argument("--direction", default="asc")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="skip PRs already present in data/dataset.jsonl")
     args = ap.parse_args()
     if args.label_fps:
-        label_fps()
+        label_fps(dataset=args.dataset)
     else:
-        collect(args.repo, args.max_prs)
+        skip = None
+        if args.skip_existing:
+            main_ds = DATA_DIR / "dataset.jsonl"
+            if main_ds.exists():
+                skip = {json.loads(l)["pr"] for l in main_ds.read_text().splitlines()}
+        collect(args.repo, args.max_prs, direction=args.direction,
+                out_name=args.dataset, skip_prs=skip)
