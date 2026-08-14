@@ -223,6 +223,10 @@ switch fallthrough, wrong precedence.
 - Null/undefined/empty/NaN paths that concretely occur; default values that mask errors.
 - Numeric: overflow, rounding, units, clamping, negative values, division by zero.
 - Regex correctness; escaping (HTML, shell, SQL, markdown); encoding; timezone/date math.
+- For classifier/parser/matcher functions: build the full decision table — enumerate each input \
+family reaching each branch, adversarially construct inputs that land in the WRONG branch \
+(too-broad substring/regex matches, precedence between nested/ancestor values, \
+unusual-but-legal shapes from SDKs — read the SDK/type definitions), and check fallback arms.
 - API contract misuse: wrong argument order, misunderstood return values, error codes ignored, \
 misuse of library semantics (verify with search/read).
 - Cross-file consistency: callers not updated, duplicated logic diverging, exhaustiveness of \
@@ -299,6 +303,19 @@ Output ONLY JSON:
 "reason": "one-paragraph disproof or confirmation with evidence"}]}
 """
 
+
+EXPAND_SYSTEM = """You prepare context for a code review. Given a PR diff and the repository \
+file tree, list the repository files a truly thorough reviewer MUST read to judge this change — \
+files that interact with the changed code:
+- definitions of symbols/routes/events/configs the diff references (e.g. the route file that \
+defines a path the diff navigates to, including redirect/beforeLoad logic)
+- direct callers/consumers of changed functions and emitters/handlers of changed events
+- sibling/platform variants of changed files (ios/android/web/desktop copies)
+- the types/schemas for data shapes the diff manipulates
+- tests covering the changed behavior
+Prefer precision over volume. Output ONLY JSON: {"paths": ["path1", ...]} (max 8, existing \
+repo paths only, changed files themselves excluded).
+"""
 
 EDITOR_SYSTEM = """You are the final editor of a code review. Input: verified findings for one \
 pull request. Produce the final list a top-tier human reviewer would actually post:
@@ -405,6 +422,7 @@ class Reviewer:
             except Exception:  # noqa: BLE001
                 guidelines = ""
         self._guidelines = guidelines
+        self._related = self._expand_context(pr, reviewable)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             fut_summary = pool.submit(self._summarize, pr, fds)
@@ -519,6 +537,46 @@ class Reviewer:
         except Exception:  # noqa: BLE001
             return {}
 
+    def _expand_context(self, pr: dict[str, Any], fds: list[FileDiff]) -> str:
+        """Ask the model which related files matter, then inline them (Greptile-style graph hop)."""
+        if not fds:
+            return ""
+        changed = {f.path for f in fds}
+        diff_summary = "\n\n".join(
+            f"## {fd.path} ({fd.status})\n{fd.annotated(max_chars=6000)}" for fd in fds[:20]
+        )
+        tree = file_tree_summary(self.ctx, max_entries=600)
+        # give the expander real paths, not just dirs
+        all_files = self.ctx.list_files()
+        listing = "\n".join(all_files[:4000])
+        try:
+            data = self.llm.chat_json(
+                [
+                    {"role": "system", "content": EXPAND_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": f"# Diff\n{diff_summary[:60_000]}\n\n# Repository files\n{listing[:80_000]}",
+                    },
+                ],
+                reasoning_effort="medium",
+            )
+            paths = [p for p in data.get("paths", []) if isinstance(p, str)][:8]
+        except Exception:  # noqa: BLE001
+            return ""
+        chunks = []
+        budget = 60_000
+        for p in paths:
+            if p in changed or budget <= 0:
+                continue
+            content = self.ctx.file_content(p)
+            if content is None:
+                continue
+            take = content[: min(budget, 25_000)]
+            numbered = "\n".join(f"{i + 1:>5}\t{l}" for i, l in enumerate(take.splitlines()))
+            chunks.append(f"## Related file: {p}\n{numbered}")
+            budget -= len(take)
+        return "\n\n".join(chunks)
+
     def _find(self, pr: dict[str, Any], fds: list[FileDiff],
               learnings: list[str], lint_hints: list[dict] | None = None) -> list[Finding]:
         batches = self._batch_files(fds)
@@ -550,6 +608,12 @@ class Reviewer:
                 if other_files
                 else ""
             )
+            related_note = (
+                "\n# Related repository files (read them — interactions with the diff often hide bugs)\n"
+                + self._related
+                if getattr(self, "_related", "")
+                else ""
+            )
             lint_note = ""
             if lint_hints:
                 batch_paths = {f.path for f in batch}
@@ -561,7 +625,7 @@ class Reviewer:
                     )
             user = (
                 f"{self._pr_header(pr)}\n\n{profile_note}{learn_note}{guide_note}\n\n"
-                f"# Repository layout\n{tree}\n{other_note}{lint_note}\n\n# Files to review\n\n"
+                f"# Repository layout\n{tree}\n{other_note}{lint_note}{related_note}\n\n# Files to review\n\n"
                 + "\n\n".join(self._file_block(fd) for fd in batch)
             )
             system = FINDER_SYSTEM.replace("%LENS%", lens_text)
