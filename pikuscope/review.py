@@ -286,6 +286,26 @@ Output ONLY JSON:
 """
 
 
+EDITOR_SYSTEM = """You are the final editor of a code review. Input: verified findings for one \
+pull request. Produce the final list a top-tier human reviewer would actually post:
+
+1. MERGE duplicates/overlaps: findings sharing a root cause (same underlying defect, even if \
+anchored a few lines apart or phrased differently) become ONE finding — keep the clearest \
+anchor/body, fold unique details of the others into it.
+2. TRIM noise: if several minor findings restate variations of one theme, keep the strongest.
+3. Keep ALL distinct critical/major findings. Keep distinct real minors. Drop only redundancy, \
+not substance. Do not invent anything new.
+
+Output ONLY JSON:
+{"final": [{"keep_index": int, "merge_indices": [int, ...], "revised_title": str|null, \
+"revised_body": str|null}]}
+- keep_index: the finding to keep (its anchor/suggestion are reused).
+- merge_indices: findings folded into it (may be empty).
+- revised_title/revised_body: only when merging changed the content; else null.
+Findings not referenced anywhere are dropped as redundant — reference every finding you keep.
+"""
+
+
 class Reviewer:
     def __init__(self, llm: LLMClient, ctx: RepoContext, cfg: Config | None = None):
         self.llm = llm
@@ -399,9 +419,61 @@ class Reviewer:
             final.append(f)
         order = {s: i for i, s in enumerate(SEVERITIES)}
         final.sort(key=lambda f: (order.get(f.severity, 9), -f.confidence))
+        if len(final) > 1:
+            note(f"editing {len(final)} confirmed findings")
+            final = self._edit_final(final, dropped)
         result.findings = final[: self.cfg.max_findings]
         result.dropped = dropped
         return result
+
+    def _edit_final(self, findings: list[Finding], dropped: list[Finding]) -> list[Finding]:
+        """Merge duplicate root causes and trim redundant minors (single cheap call)."""
+        blocks = []
+        for i, f in enumerate(findings):
+            blocks.append(
+                f"### Finding {i}\npath: {f.path}:{f.start_line}-{f.end_line}\n"
+                f"severity: {f.severity} | category: {f.category} | confidence: {f.confidence}\n"
+                f"title: {f.title}\nbody:\n{f.body[:1500]}"
+            )
+        try:
+            data = self.llm.chat_json(
+                [
+                    {"role": "system", "content": EDITOR_SYSTEM},
+                    {"role": "user", "content": "\n\n".join(blocks)},
+                ],
+                reasoning_effort="high",
+            )
+        except Exception:  # noqa: BLE001 — editing is best-effort
+            return findings
+        out: list[Finding] = []
+        seen: set[int] = set()
+        for item in data.get("final", []):
+            try:
+                keep = int(item.get("keep_index"))
+            except (TypeError, ValueError):
+                continue
+            if keep < 0 or keep >= len(findings) or keep in seen:
+                continue
+            f = findings[keep]
+            seen.add(keep)
+            merged = [int(x) for x in item.get("merge_indices", []) if isinstance(x, (int, float))]
+            for mi in merged:
+                if 0 <= mi < len(findings):
+                    seen.add(mi)
+            if item.get("revised_title"):
+                f.title = str(item["revised_title"])[:200]
+            if item.get("revised_body"):
+                f.body = str(item["revised_body"])
+            out.append(f)
+        if not out:
+            return findings
+        # anything unreferenced was judged redundant
+        for i, f in enumerate(findings):
+            if i not in seen:
+                f.verify_verdict = "duplicate"
+                f.verify_reason = f.verify_reason or "merged by editor"
+                dropped.append(f)
+        return out
 
     def _summarize(self, pr: dict[str, Any], fds: list[FileDiff]) -> dict[str, Any]:
         diff_parts = []
@@ -467,6 +539,7 @@ class Reviewer:
                     [{"role": "system", "content": system}, {"role": "user", "content": user}],
                     TOOLS_SPEC,
                     handler,
+                    max_rounds=10,
                 )
                 data = extract_json(text)
             except Exception:  # noqa: BLE001 — a lens failing shouldn't kill the review
@@ -545,6 +618,7 @@ class Reviewer:
                     [{"role": "system", "content": VERIFIER_SYSTEM}, {"role": "user", "content": user}],
                     TOOLS_SPEC,
                     handler,
+                    max_rounds=12,
                 )
                 data = extract_json(text)
             except Exception:  # noqa: BLE001 — verification is best-effort; keep candidates
