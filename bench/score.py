@@ -26,18 +26,27 @@ FP_LABELS = {"false_positive"}
 MATCH_SYSTEM = """You compare code-review findings from two reviewers on the SAME pull request \
 and decide which ones identify the same underlying issue.
 
-A MATCH means the same root cause at the same place: both reviewers would be satisfied by the \
-same fix. Same file but different issue = no match. Same general topic but different defect = \
-no match. Wording/severity may differ; a match is about the defect, not the prose. A match may \
-also count if reviewer B covers the issue as part of a broader finding, as long as B explicitly \
-mentions the specific problem A raised.
+A MATCH means the same root cause: the fix a candidate demands would also resolve (or directly \
+surface) the ground finding's defect. Apply these rules:
+- Wording, severity, and exact line may differ; a match is about the defect, not the prose.
+- If the ground finding is a CONCRETE INSTANCE of a broader defect a candidate describes \
+(e.g. ground: "regex also matches serialized 500 bodies"; candidate: "non-404 errors are \
+misclassified as missing sessions — only a confirmed 404 may trigger the fallback"), that is a \
+match ("partial" at minimum): the candidate's fix eliminates the ground's failure mode.
+- If SEVERAL candidates together describe the defect cluster and any one of them would drive \
+the same fix, match the ground to the closest one.
+- Ground findings from bots often repeat the same defect across fix-iteration commits; judge \
+each against the candidates on its merits even if it anchors to a different commit's lines.
+- Same file but genuinely different defect = no match. A candidate about test coverage does NOT \
+match a ground finding about the production bug itself (and vice versa) — surfacing ≠ fixing \
+counts only when the candidate also names the production defect.
 
 For each GROUND finding, check every CANDIDATE finding (a match candidate list is provided).
 
 Output ONLY JSON:
 {"matches": [{"ground_id": <id>, "candidate_index": <int or null>, "match_strength": "exact"|"partial"|"none", "reason": "one sentence"}]}
 - "exact": same defect, same fix.
-- "partial": candidate identifies the problem but incompletely or as a side note.
+- "partial": candidate covers the root cause incompletely, more broadly, or as an instance.
 - "none": no candidate covers it (candidate_index null).
 """
 
