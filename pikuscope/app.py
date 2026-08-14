@@ -174,8 +174,11 @@ class App:
                     lines.append(f"**`{d['path']}:{d['insert_before_line']}`**\n```\n{d['text']}\n```")
                 reply("\n".join(lines))
         elif cmd == "generate title":
+            from .diff import parse_unified_diff
+
             ctx, reviewer, store = self._ctx_and_reviewer(repo, pr)
-            result = reviewer._summarize(pr, [])
+            fds = parse_unified_diff(repo.pr_diff(number))
+            result = reviewer._summarize(pr, fds)
             reply(
                 f"**Suggested title:** `{result.get('suggested_title', '')}`\n\n"
                 f"**Suggested description:**\n\n{result.get('suggested_description', '')}"

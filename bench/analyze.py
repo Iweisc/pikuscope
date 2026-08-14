@@ -57,8 +57,7 @@ def analyze(run_name: str) -> None:
         ground_by_id = {f["id"]: f for f in entry["findings"]}
         g_blocks = []
         for m in misses:
-            g = next((f for f in entry["findings"] if f["path"] == m["path"] and f["body"][:200] == m["body"][:200]), None)
-            gid = g["id"] if g else -1
+            gid = m.get("id", -1)
             g_blocks.append(
                 f"### MISSED ground_id={gid} (bot={m['bot']})\n{m['path']}:{m.get('line')}\n{m['body'][:1200]}"
             )

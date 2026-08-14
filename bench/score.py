@@ -153,7 +153,7 @@ def score(run_name: str, refresh: bool = False) -> None:
                     matched_candidate_keys.add((pr, int(m["candidate_index"])))
             elif is_substantive and label in VALID_LABELS:
                 missed_examples.append(
-                    {"pr": pr, "bot": bot, "kind": kind, "label": label,
+                    {"pr": pr, "id": g["id"], "bot": bot, "kind": kind, "label": label,
                      "path": g["path"], "line": g.get("line"),
                      "body": g["body"][:400]}
                 )
