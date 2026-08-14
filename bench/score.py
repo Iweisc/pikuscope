@@ -116,6 +116,7 @@ def score(run_name: str, refresh: bool = False) -> None:
     # aggregate
     stats = Counter()
     by_bot: dict[str, Counter] = defaultdict(Counter)
+    by_bot_valid: dict[str, Counter] = defaultdict(Counter)
     by_label: dict[str, Counter] = defaultdict(Counter)
     fp_analysis = Counter()
     missed_examples = []
@@ -136,6 +137,9 @@ def score(run_name: str, refresh: bool = False) -> None:
             g = ground_by_id.get(m.get("ground_id"))
             if g is None:
                 continue
+            if g.get("ci_dependent"):
+                stats["ci_dependent_skipped"] += 1
+                continue
             label = g.get("reception", "unclear")
             strength = m.get("match_strength", "none")
             hit = strength in ("exact", "partial")
@@ -145,10 +149,14 @@ def score(run_name: str, refresh: bool = False) -> None:
             stats["ground_total"] += 1
             by_bot[bot]["total"] += 1
             by_label[label]["total"] += 1
+            if label in VALID_LABELS:
+                by_bot_valid[bot]["total"] += 1
             if hit:
                 stats["ground_matched"] += 1
                 by_bot[bot]["matched"] += 1
                 by_label[label]["matched"] += 1
+                if label in VALID_LABELS:
+                    by_bot_valid[bot]["matched"] += 1
                 if m.get("candidate_index") is not None:
                     matched_candidate_keys.add((pr, int(m["candidate_index"])))
             elif is_substantive and label in VALID_LABELS:
@@ -164,7 +172,7 @@ def score(run_name: str, refresh: bool = False) -> None:
                     fp_analysis["fp_not_repeated"] += 1
                 # strong catch: we generated it as a candidate and refuted it
                 refuted = any(
-                    d.get("path") == g["path"] and d.get("verify_verdict") == "refuted"
+                    d.get("path") == g["path"] and d.get("verify_verdict") in ("refuted", "duplicate")
                     for d in rr.get("dropped", [])
                 )
                 if refuted:
@@ -184,6 +192,10 @@ def score(run_name: str, refresh: bool = False) -> None:
         "recall_overall": pct(stats["ground_matched"], stats["ground_total"]),
         "recall_by_bot": {
             b: {"recall": pct(c["matched"], c["total"]), "n": c["total"]} for b, c in sorted(by_bot.items())
+        },
+        "recall_by_bot_valid_only": {
+            b: {"recall": pct(c["matched"], c["total"]), "n": c["total"]}
+            for b, c in sorted(by_bot_valid.items())
         },
         "recall_by_reception": {
             l: {"recall": pct(c["matched"], c["total"]), "n": c["total"]} for l, c in sorted(by_label.items())

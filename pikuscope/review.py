@@ -271,8 +271,13 @@ pre-existing and untouched by this diff.
 - "duplicate": same root cause as a lower-indexed candidate; keep the best one confirmed and \
 mark the rest duplicate.
 
-Be strict about speculation: a finding whose failure scenario you cannot concretely trace \
-through the code is refuted. But do NOT refute real minor defects merely for being minor.
+Refutation requires PROOF, not plausibility: you must be able to point at code that makes the \
+scenario impossible, or show the diff doesn't touch it. If a candidate describes a real \
+user-visible behavior change (history/navigation, focus, data shown) that the PR description \
+does not clearly claim as intended, prefer confirm-as-minor or downgrade over refute — teams \
+routinely fix exactly these. Be strict about speculation: a finding whose failure scenario you \
+cannot concretely trace through the code is refuted. But do NOT refute real minor defects \
+merely for being minor.
 
 Output ONLY JSON:
 {"verdicts": [{"index": int, "verdict": "confirmed"|"downgraded"|"refuted"|"duplicate", \
