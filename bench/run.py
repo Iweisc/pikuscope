@@ -115,6 +115,8 @@ def main() -> None:
         entries = [e for e in entries if e["pr"] in want]
     if args.limit:
         entries = entries[: args.limit]
+    # smallest first: quick results land early, monsters run at the end
+    entries.sort(key=lambda e: (e.get("changed_files") or 999, e.get("additions") or 0))
 
     run_dir = RUNS / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
