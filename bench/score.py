@@ -53,7 +53,7 @@ def load_run(run_name: str) -> dict[int, dict]:
 def match_pr(llm: LLMClient, entry: dict, run_result: dict) -> list[dict]:
     ground = entry["findings"]
     cands = run_result.get("findings", [])
-    # dropped candidates count for FP analysis, not for recall
+    dropped = run_result.get("dropped", [])
     if not ground:
         return []
     g_blocks = []
@@ -67,21 +67,32 @@ def match_pr(llm: LLMClient, entry: dict, run_result: dict) -> list[dict]:
     c_blocks = []
     for i, f in enumerate(cands):
         c_blocks.append(
-            f"### CANDIDATE index={i}\nfile: {f['path']} lines {f['start_line']}-{f['end_line']}\n"
+            f"### CANDIDATE index={i} [REPORTED]\nfile: {f['path']} lines {f['start_line']}-{f['end_line']}\n"
             f"severity={f['severity']} category={f['category']}\ntitle: {f['title']}\n"
             f"body:\n{f['body'][:2000]}"
+        )
+    for j, f in enumerate(dropped):
+        c_blocks.append(
+            f"### CANDIDATE index={len(cands) + j} [DROPPED — generated but suppressed by verifier]\n"
+            f"file: {f['path']} lines {f['start_line']}-{f['end_line']}\n"
+            f"title: {f['title']}\nbody:\n{f['body'][:1200]}"
         )
     user = (
         f"# PR #{entry['pr']}: {entry['title']}\n\n# GROUND findings (reviewer A)\n"
         + "\n\n".join(g_blocks)
-        + "\n\n# CANDIDATE findings (reviewer B)\n"
+        + "\n\n# CANDIDATE findings (reviewer B; some marked DROPPED)\n"
         + ("\n\n".join(c_blocks) if c_blocks else "(reviewer B reported no findings)")
     )
     data = llm.chat_json(
         [{"role": "system", "content": MATCH_SYSTEM}, {"role": "user", "content": user}],
         reasoning_effort="high",
     )
-    return data.get("matches", [])
+    matches = data.get("matches", [])
+    # annotate which candidate indexes were dropped so scoring can distinguish
+    for m in matches:
+        ci = m.get("candidate_index")
+        m["candidate_dropped"] = ci is not None and int(ci) >= len(cands)
+    return matches
 
 
 def score(run_name: str, refresh: bool = False) -> None:
@@ -142,7 +153,9 @@ def score(run_name: str, refresh: bool = False) -> None:
                 continue
             label = g.get("reception", "unclear")
             strength = m.get("match_strength", "none")
-            hit = strength in ("exact", "partial")
+            was_dropped = bool(m.get("candidate_dropped"))
+            hit = strength in ("exact", "partial") and not was_dropped
+            dropped_hit = strength in ("exact", "partial") and was_dropped
             bot = g["bot"]
             kind = g.get("kind", "actionable")
             is_substantive = kind in ("actionable", "comment") or bot != "coderabbit"
@@ -151,6 +164,10 @@ def score(run_name: str, refresh: bool = False) -> None:
             by_label[label]["total"] += 1
             if label in VALID_LABELS:
                 by_bot_valid[bot]["total"] += 1
+            if dropped_hit:
+                stats["lost_to_verifier"] += 1
+                if label in VALID_LABELS:
+                    stats["lost_to_verifier_valid"] += 1
             if hit:
                 stats["ground_matched"] += 1
                 by_bot[bot]["matched"] += 1
@@ -170,12 +187,8 @@ def score(run_name: str, refresh: bool = False) -> None:
                 fp_analysis["fp_total"] += 1
                 if not hit:
                     fp_analysis["fp_not_repeated"] += 1
-                # strong catch: we generated it as a candidate and refuted it
-                refuted = any(
-                    d.get("path") == g["path"] and d.get("verify_verdict") in ("refuted", "duplicate")
-                    for d in rr.get("dropped", [])
-                )
-                if refuted:
+                if dropped_hit:
+                    # strongest catch: we generated the same claim and struck it down
                     fp_analysis["fp_explicitly_refuted"] += 1
 
     novel = total_piku_findings - len(matched_candidate_keys)
@@ -206,6 +219,8 @@ def score(run_name: str, refresh: bool = False) -> None:
         ),
         "fp_analysis": dict(fp_analysis),
         "fp_avoid_rate": pct(fp_analysis["fp_not_repeated"], fp_analysis["fp_total"]),
+        "lost_to_verifier": stats["lost_to_verifier"],
+        "lost_to_verifier_valid": stats["lost_to_verifier_valid"],
         "pikuscope_findings_total": total_piku_findings,
         "pikuscope_findings_matched": len(matched_candidate_keys),
         "pikuscope_findings_novel": novel,
