@@ -13,6 +13,20 @@ from typing import Any
 
 import httpx
 
+# Global cap on in-flight LLM requests across all threads/clients in this process.
+# Oversubscribing the endpoint queues server-side and slows every request down.
+_GLOBAL_SEMAPHORE: threading.Semaphore | None = None
+_SEM_LOCK = threading.Lock()
+
+
+def _global_semaphore() -> threading.Semaphore:
+    global _GLOBAL_SEMAPHORE
+    with _SEM_LOCK:
+        if _GLOBAL_SEMAPHORE is None:
+            n = int(os.environ.get("PIKUSCOPE_MAX_CONCURRENCY", "10"))
+            _GLOBAL_SEMAPHORE = threading.Semaphore(max(1, n))
+        return _GLOBAL_SEMAPHORE
+
 
 def load_dotenv(path: str | Path = ".env") -> None:
     """Minimal .env loader; does not override existing env vars."""
@@ -89,12 +103,13 @@ class LLMClient:
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    resp = client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                        json=payload,
-                    )
+                with _global_semaphore():
+                    with httpx.Client(timeout=self.timeout) as client:
+                        resp = client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                            json=payload,
+                        )
                 if resp.status_code in (429, 500, 502, 503, 504):
                     raise RuntimeError(f"retryable status {resp.status_code}: {resp.text[:300]}")
                 resp.raise_for_status()
@@ -144,12 +159,13 @@ class LLMClient:
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    resp = client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                        json=payload,
-                    )
+                with _global_semaphore():
+                    with httpx.Client(timeout=self.timeout) as client:
+                        resp = client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                            json=payload,
+                        )
                 if resp.status_code in (429, 500, 502, 503, 504):
                     raise RuntimeError(f"retryable status {resp.status_code}: {resp.text[:300]}")
                 resp.raise_for_status()
