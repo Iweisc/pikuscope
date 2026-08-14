@@ -31,7 +31,8 @@ class Finding:
     suggestion: str | None = None
     confidence: float = 0.7
     failure_scenario: str = ""
-    verify_verdict: str = ""  # confirmed | refuted | downgraded
+    lens: str = ""
+    verify_verdict: str = ""  # confirmed | refuted | downgraded | duplicate
     verify_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,60 +131,108 @@ def make_tool_handler(ctx: RepoContext):
     return handler
 
 
-FINDER_SYSTEM = """You are pikuscope, a principal-level code reviewer. You review pull requests \
-with the judgment of a staff engineer who knows this codebase: precise, evidence-driven, and \
-allergic to false positives.
+FINDER_SYSTEM = """You are pikuscope, a principal-level code reviewer hunting for problems in a \
+pull request. You are the RECALL stage of a two-stage pipeline: enumerate every defensible \
+issue; a separate adversarial verifier will filter false positives. A real issue you fail to \
+surface here is lost forever — when in doubt, REPORT it as a candidate.
 
-## Objective
-Find REAL problems INTRODUCED BY THIS CHANGE. A real problem is one where you can describe a \
-concrete scenario in which the code misbehaves: wrong runtime behavior, broken edge case, \
-security hole, race condition, leak, perf regression on a hot path, breaking an API contract \
-that existing callers rely on, state-management bugs, incorrect cleanup, off-by-one, \
-wrong dependency arrays / stale closures (React), unhandled promise rejections, incorrect \
-platform-specific behavior, data loss, a11y regressions in UI code.
+## What to hunt (lens for this pass)
+%LENS%
 
 ## Method — investigate before you claim
-You have tools over the repository at the PR's head commit. Before reporting a finding, use them to:
+You have tools over the repository at the PR's head commit. Use them:
 - Read the FULL modified function/component, not just the hunk, so you see guards and cleanup.
-- Find callers/usages of changed functions to check contracts (`search_code`).
-- Check sibling implementations for conventions the change may violate.
-- Verify the claimed symbol/type/helper actually behaves as you assume (read its definition).
-Also actively look for what the diff does NOT change but should have: other call sites needing \
-the same fix, copies of duplicated logic, related platform variants (e.g. ios/android/web \
-versions of the same file).
+- Find callers/usages of changed symbols to check contracts (`search_code`).
+- Check sibling implementations and platform variants (ios/android/web copies) for behavior the \
+change may break or forget to update.
+- Verify claimed helpers/types actually behave as you assume (read their definitions).
+Also hunt for what the diff does NOT change but should have: other call sites needing the same \
+fix, duplicated logic copies, related config.
+
+## Report
+- Issues INTRODUCED or WORSENED by this change (or the change fails its own stated purpose).
+- Minor-but-real defects count: senior reviewers DO flag needless effect re-subscription, \
+overbroad string matching, missing cleanup, silently swallowed errors, subtle navigation/history \
+misbehavior. Report them with severity "minor".
+- Pre-existing defects ONLY if the diff touches those exact lines (mark severity honestly).
 
 ## Do NOT report
-- Pre-existing issues the diff doesn't touch or make worse (unless the PR's purpose is to fix exactly that and fails to).
-- Style/formatting/naming taste, import ordering, comment wording.
-- Anything the project's compiler, typechecker, or linter obviously catches.
-- Speculative "could be undefined" claims without a real path where it is.
-- "Consider adding tests/docs" boilerplate.
-- Refactor suggestions that don't fix a defect (unless profile is assertive, then max 2, marked minor/nit).
-- Duplicates: one finding per root cause; mention other affected lines inside that finding.
+- Formatting, import order, naming taste, comment wording.
+- Things the compiler/typechecker trivially rejects.
+- "Add tests/docs" boilerplate.
+- Vague "could be undefined" without a concrete path.
 
 ## Line anchoring
 `path`, `start_line`, `end_line` must reference NEW-file line numbers visible in the annotated \
-diff (added `+` or context lines). Anchor to the smallest range that shows the defect. \
-If you provide `suggestion`, it must be the complete replacement for exactly lines \
-start_line..end_line (same indentation style, no markdown fences) so it can be committed as-is.
+diff (added `+` or context lines). Anchor to the smallest range that shows the defect. If you \
+provide `suggestion`, it must be a complete replacement for exactly lines start_line..end_line \
+(matching indentation, no fences) so it can be committed as-is.
 
 ## Output
-After your investigation, output ONLY a JSON object:
+After investigating, output ONLY a JSON object:
 {"findings": [{
   "path": str,
   "start_line": int, "end_line": int,
   "severity": "critical" | "major" | "minor" | "nit",
-  "category": one of %s,
+  "category": one of %CATS%,
   "title": short imperative summary (<= 80 chars),
   "body": markdown; the defect, the evidence (quote the exact code), the concrete failure scenario, and the fix. Concise but complete.,
   "suggestion": str | null,
-  "confidence": 0.0-1.0 (probability a staff engineer would agree this is a real, introduced defect worth fixing),
+  "confidence": 0.0-1.0 (probability this is a real, introduced defect worth fixing),
   "failure_scenario": one sentence: concrete inputs/state -> wrong outcome
 }]}
-Return {"findings": []} if the change is clean. An empty review of a clean PR is a GOOD review. \
+Return {"findings": []} only if you truly found nothing under this lens. \
 Severity calibration: critical = data loss/security/crash on common path; major = incorrect \
-behavior a user will hit; minor = real but edge-case or low-impact defect; nit = polish.
-""" % (json.dumps(CATEGORIES))
+behavior a user will hit; minor = real but edge-case, low-impact, or hygiene defect a senior \
+reviewer would still flag; nit = polish.
+""".replace("%CATS%", json.dumps(CATEGORIES))
+
+LENSES = [
+    (
+        "state-lifecycle",
+        """State, lifecycle, and concurrency defects:
+- React/UI: wrong or missing dependency arrays, stale closures, effects that re-subscribe or \
+re-run needlessly (listener/subscription churn), missing cleanup on unmount, setState-after-\
+unmount, refs vs state misuse, memoization broken by unstable identities, event handlers \
+capturing stale values.
+- Async: race conditions, unawaited promises, unhandled rejections, out-of-order responses, \
+missing AbortController/cancellation, double-fire on rapid input.
+- Resources: leaks of listeners/timers/sockets/files/observers; cleanup paths that skip cases.
+- Platform lifecycle: iOS/Android/desktop/web divergence in mount, focus, background, resume.""",
+    ),
+    (
+        "logic-edges",
+        """Logic and edge-case defects:
+- String/path/URL matching that over- or under-matches (e.g. prefix checks like startsWith that \
+match unintended siblings, missing boundary checks, case sensitivity, locale issues).
+- Off-by-one, wrong comparison operators, inverted conditions, unreachable/dead branches, \
+switch fallthrough, wrong precedence.
+- Null/undefined/empty/NaN paths that concretely occur; default values that mask errors.
+- Numeric: overflow, rounding, units, clamping, negative values, division by zero.
+- Regex correctness; escaping (HTML, shell, SQL, markdown); encoding; timezone/date math.
+- API contract misuse: wrong argument order, misunderstood return values, error codes ignored, \
+misuse of library semantics (verify with search/read).
+- Cross-file consistency: callers not updated, duplicated logic diverging, exhaustiveness of \
+switches over enums/unions after adding a variant.""",
+    ),
+    (
+        "behavior-ux",
+        """User-visible behavior, data, and security defects:
+- Navigation/history semantics (push vs replace, back-button traps, deep links, nested routes).
+- Focus, scroll, selection, keyboard, IME handling; loading/error/empty states; race between \
+user input and async updates; optimistic updates that desync.
+- Persistence: data loss on reload/migration, cache invalidation misses, stale reads, \
+localStorage/DB schema drift.
+- Error handling users can hit: silent failures reported as success, missing user feedback, \
+retries that duplicate side effects.
+- Security: injection, XSS, path traversal, secrets exposure, permissive CORS/auth checks, \
+unsafe HTML/markdown rendering.
+- Performance on hot paths: N+1 calls, quadratic loops over unbounded data, sync work on the \
+UI thread, unnecessary re-renders of large trees.
+- Accessibility regressions in changed UI: focus traps, missing labels/roles, hover-only \
+affordances unusable on touch devices.""",
+    ),
+]
 
 
 SUMMARY_SYSTEM = """You are pikuscope, an AI code review assistant. Produce PR-level artifacts \
@@ -203,25 +252,32 @@ Output ONLY JSON:
 """
 
 
-VERIFIER_SYSTEM = """You are an adversarial code-review verifier. Your job is to REFUTE weak \
-review findings so only real, introduced defects survive. You have tools over the repo at the \
-PR head commit.
+VERIFIER_SYSTEM = """You are an adversarial code-review verifier — the PRECISION stage. \
+Candidates come from recall-oriented finder passes and WILL contain false positives and \
+duplicates. Your job: only real, introduced defects survive. You have tools over the repo at \
+the PR head commit.
 
 For EACH candidate finding, investigate the actual code (read the full function, check callers, \
 check guards elsewhere, check whether the issue is pre-existing rather than introduced by this \
 diff) and decide:
-- "confirmed": the defect is real, introduced/worsened by this diff, and worth a comment. \
-Check the anchor lines and suggestion: if the suggestion is wrong or would not compile, fix it or null it.
+- "confirmed": the defect is real, introduced/worsened by this diff, and a competent reviewer \
+would post it. Minor-but-real hygiene defects (needless resubscription, overbroad matching, \
+missing cleanup, swallowed errors) ARE confirmable at severity minor. Check the anchor lines \
+and suggestion: if the suggestion is wrong or would not compile, null it via revised_suggestion_invalid.
 - "downgraded": real but overstated -> give revised severity/confidence.
-- "refuted": not a real defect (code is actually correct, guarded elsewhere, pre-existing, \
-purely stylistic, or the scenario cannot occur). Explain the disproof.
+- "refuted": not a real defect: the code is actually correct, the scenario cannot occur (prove \
+it from code you read), it is guarded elsewhere, it is purely stylistic taste, or it is \
+pre-existing and untouched by this diff.
+- "duplicate": same root cause as a lower-indexed candidate; keep the best one confirmed and \
+mark the rest duplicate.
 
-Be strict: a finding that merely "could be worth considering" is refuted. A finding whose \
-failure scenario you cannot concretely reproduce from the code is refuted.
+Be strict about speculation: a finding whose failure scenario you cannot concretely trace \
+through the code is refuted. But do NOT refute real minor defects merely for being minor.
 
 Output ONLY JSON:
-{"verdicts": [{"index": int, "verdict": "confirmed"|"downgraded"|"refuted", \
-"revised_severity": str|null, "revised_confidence": 0.0-1.0, "reason": "one-paragraph disproof or confirmation with evidence"}]}
+{"verdicts": [{"index": int, "verdict": "confirmed"|"downgraded"|"refuted"|"duplicate", \
+"revised_severity": str|null, "revised_confidence": 0.0-1.0, "revised_suggestion_invalid": bool, \
+"reason": "one-paragraph disproof or confirmation with evidence"}]}
 """
 
 
@@ -357,11 +413,12 @@ class Reviewer:
         tree = file_tree_summary(self.ctx)
         handler = make_tool_handler(self.ctx)
 
-        def run_batch(batch: list[FileDiff]) -> list[Finding]:
+        def run_batch(job: tuple[list[FileDiff], tuple[str, str]]) -> list[Finding]:
+            batch, (lens_name, lens_text) = job
             profile_note = (
-                "Profile: assertive — you may include up to 2 maintainability/style findings if clearly worthwhile."
+                "Profile: assertive — also surface maintainability/consistency candidates."
                 if self.cfg.profile == "assertive"
-                else "Profile: chill — only report defects that matter; skip style entirely."
+                else "Profile: chill — surface real defects of any severity; skip pure style."
             )
             learn_note = (
                 "\n# Reviewer learnings for this repository (apply them)\n" + "\n".join(f"- {l}" for l in learnings)
@@ -380,12 +437,16 @@ class Reviewer:
                 f"# Repository layout\n{tree}\n{other_note}\n\n# Files to review\n\n"
                 + "\n\n".join(self._file_block(fd) for fd in batch)
             )
-            text = self.llm.chat_with_tools(
-                [{"role": "system", "content": FINDER_SYSTEM}, {"role": "user", "content": user}],
-                TOOLS_SPEC,
-                handler,
-            )
-            data = extract_json(text)
+            system = FINDER_SYSTEM.replace("%LENS%", lens_text)
+            try:
+                text = self.llm.chat_with_tools(
+                    [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    TOOLS_SPEC,
+                    handler,
+                )
+                data = extract_json(text)
+            except Exception:  # noqa: BLE001 — a lens failing shouldn't kill the review
+                return []
             out = []
             for raw in data.get("findings", []):
                 try:
@@ -401,15 +462,17 @@ class Reviewer:
                             suggestion=raw.get("suggestion") or None,
                             confidence=float(raw.get("confidence", 0.7) or 0.7),
                             failure_scenario=str(raw.get("failure_scenario", "")),
+                            lens=lens_name,
                         )
                     )
                 except (TypeError, ValueError):
                     continue
             return out
 
+        jobs = [(batch, lens) for batch in batches for lens in LENSES]
         findings: list[Finding] = []
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            for batch_result in pool.map(run_batch, batches):
+        with ThreadPoolExecutor(max_workers=min(6, len(jobs)) or 1) as pool:
+            for batch_result in pool.map(run_batch, jobs):
                 findings.extend(batch_result)
         return findings
 
@@ -419,35 +482,56 @@ class Reviewer:
             return [], []
         handler = make_tool_handler(self.ctx)
         by_path = {f.path: f for f in fds}
-        blocks = []
+        # Group candidates by path so duplicates land in the same verifier call.
+        candidates = sorted(candidates, key=lambda f: (f.path, f.start_line))
+        chunks: list[list[tuple[int, Finding]]] = []
+        cur: list[tuple[int, Finding]] = []
+        cur_paths: set[str] = set()
         for i, f in enumerate(candidates):
-            blocks.append(
-                f"### Finding {i}\npath: {f.path}\nlines: {f.start_line}-{f.end_line}\n"
-                f"severity: {f.severity} | category: {f.category} | confidence: {f.confidence}\n"
-                f"title: {f.title}\nfailure_scenario: {f.failure_scenario}\nbody:\n{f.body}\n"
-                f"suggestion:\n{f.suggestion or '(none)'}"
+            if cur and (len(cur) >= 14 or (f.path not in cur_paths and len(cur) >= 8)):
+                chunks.append(cur)
+                cur, cur_paths = [], set()
+            cur.append((i, f))
+            cur_paths.add(f.path)
+        if cur:
+            chunks.append(cur)
+
+        def verify_chunk(chunk: list[tuple[int, Finding]]) -> dict[int, dict]:
+            blocks = []
+            for i, f in chunk:
+                blocks.append(
+                    f"### Finding {i}\npath: {f.path}\nlines: {f.start_line}-{f.end_line}\n"
+                    f"severity: {f.severity} | category: {f.category} | confidence: {f.confidence}\n"
+                    f"title: {f.title}\nfailure_scenario: {f.failure_scenario}\nbody:\n{f.body}\n"
+                    f"suggestion:\n{f.suggestion or '(none)'}"
+                )
+            diff_blocks = []
+            for path in sorted({f.path for _, f in chunk}):
+                fd = by_path.get(path)
+                if fd:
+                    diff_blocks.append(f"## {path}\n{fd.annotated(max_chars=20_000)}")
+            user = (
+                f"{self._pr_header(pr)}\n\n# Diff of files with candidate findings\n"
+                + "\n\n".join(diff_blocks)
+                + "\n\n# Candidate findings to verify\n"
+                + "\n\n".join(blocks)
             )
-        diff_blocks = []
-        for path in sorted({f.path for f in candidates}):
-            fd = by_path.get(path)
-            if fd:
-                diff_blocks.append(f"## {path}\n{fd.annotated(max_chars=20_000)}")
-        user = (
-            f"{self._pr_header(pr)}\n\n# Diff of files with candidate findings\n"
-            + "\n\n".join(diff_blocks)
-            + "\n\n# Candidate findings to verify\n"
-            + "\n\n".join(blocks)
-        )
-        try:
-            text = self.llm.chat_with_tools(
-                [{"role": "system", "content": VERIFIER_SYSTEM}, {"role": "user", "content": user}],
-                TOOLS_SPEC,
-                handler,
-            )
-            data = extract_json(text)
-        except Exception:  # noqa: BLE001 — verification is best-effort; keep candidates
-            return candidates, []
-        verdicts = {int(v.get("index", -1)): v for v in data.get("verdicts", [])}
+            try:
+                text = self.llm.chat_with_tools(
+                    [{"role": "system", "content": VERIFIER_SYSTEM}, {"role": "user", "content": user}],
+                    TOOLS_SPEC,
+                    handler,
+                )
+                data = extract_json(text)
+            except Exception:  # noqa: BLE001 — verification is best-effort; keep candidates
+                return {}
+            return {int(v.get("index", -1)): v for v in data.get("verdicts", [])}
+
+        verdicts: dict[int, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(chunks)) or 1) as pool:
+            for chunk_verdicts in pool.map(verify_chunk, chunks):
+                verdicts.update(chunk_verdicts)
+
         confirmed: list[Finding] = []
         dropped: list[Finding] = []
         for i, f in enumerate(candidates):
@@ -457,12 +541,14 @@ class Reviewer:
                 continue
             f.verify_verdict = str(v.get("verdict", ""))
             f.verify_reason = str(v.get("reason", ""))
-            if f.verify_verdict == "refuted":
+            if f.verify_verdict in ("refuted", "duplicate"):
                 dropped.append(f)
                 continue
             if f.verify_verdict == "downgraded":
                 if v.get("revised_severity") in SEVERITIES:
                     f.severity = v["revised_severity"]
+            if v.get("revised_suggestion_invalid"):
+                f.suggestion = None
             rc = v.get("revised_confidence")
             if isinstance(rc, (int, float)):
                 f.confidence = float(rc)

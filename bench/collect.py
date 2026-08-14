@@ -186,8 +186,10 @@ Output ONLY JSON: {"labels": [{"id": <finding id>, "label": str, "confidence": 0
 """
 
 
-def label_fps(batch_size: int = 25) -> None:
+def label_fps(batch_size: int = 25, workers: int = 8) -> None:
     """LLM-label each finding's reception from dev interactions."""
+    from concurrent.futures import ThreadPoolExecutor
+
     llm = LLMClient.from_env()
     ds_path = DATA_DIR / "dataset.jsonl"
     entries = [json.loads(l) for l in ds_path.read_text().splitlines()]
@@ -197,8 +199,9 @@ def label_fps(batch_size: int = 25) -> None:
             if "reception" not in f:
                 todo.append((e, f))
     print(f"labeling {len(todo)} findings", file=sys.stderr)
-    for i in range(0, len(todo), batch_size):
-        chunk = todo[i : i + batch_size]
+    chunks = [todo[i : i + batch_size] for i in range(0, len(todo), batch_size)]
+
+    def do_chunk(chunk):
         blocks = []
         for e, f in chunk:
             thread_txt = "\n".join(
@@ -218,20 +221,25 @@ def label_fps(batch_size: int = 25) -> None:
                 ],
                 reasoning_effort="medium",
             )
-            labels = {l["id"]: l for l in data.get("labels", [])}
+            return {l["id"]: l for l in data.get("labels", [])}
         except Exception as ex:  # noqa: BLE001
             print(f"label batch failed: {ex}", file=sys.stderr)
-            labels = {}
-        for e, f in chunk:
-            lab = labels.get(f["id"])
-            if lab:
-                f["reception"] = lab.get("label", "unclear")
-                f["reception_confidence"] = lab.get("confidence", 0.5)
-                f["reception_evidence"] = lab.get("evidence", "")
-            else:
-                f["reception"] = "unclear"
-                f["reception_confidence"] = 0.0
-        print(f"labeled {min(i + batch_size, len(todo))}/{len(todo)}", file=sys.stderr)
+            return {}
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for chunk, labels in zip(chunks, pool.map(do_chunk, chunks)):
+            for e, f in chunk:
+                lab = labels.get(f["id"])
+                if lab:
+                    f["reception"] = lab.get("label", "unclear")
+                    f["reception_confidence"] = lab.get("confidence", 0.5)
+                    f["reception_evidence"] = lab.get("evidence", "")
+                else:
+                    f["reception"] = "unclear"
+                    f["reception_confidence"] = 0.0
+            done += len(chunk)
+            print(f"labeled {done}/{len(todo)}", file=sys.stderr, flush=True)
 
     with ds_path.open("w") as fh:
         for e in entries:
