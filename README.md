@@ -60,7 +60,20 @@ Repo configuration: copy `examples/pikuscope.example.yaml` to `.pikuscope.yaml`.
 | CLI mode | ✅ | ➖ | ✅ |
 | Draft-PR skipping | ✅ | ✅ | ✅ |
 | Fail-CI-on-severity gate | ➖ | ✅ | ✅ `fail_on: [critical]` |
+| Repo guideline ingestion (CLAUDE.md, .cursorrules, AGENTS.md, …) | ✅ | ✅ | ✅ auto-scanned into review context |
+| Auto-review gating (title keywords, drafts, base branches, authors) | ✅ | ✅ | ✅ `reviews.auto_review.*` |
+| REQUEST_CHANGES workflow | ✅ | ➖ | ✅ `request_changes_workflow` |
+| Commit status reporting | ✅ | ➖ | ✅ `commit_status` |
+| "Prompt for AI agents" blocks on findings | ✅ | ✅ (IDE handoff) | ✅ per-finding collapsible prompt |
+| Unit test generation | ✅ | ✅ (TREX) | ✅ `@pikuscope generate unit tests` |
+| Autofix (commit suggestions to the branch) | ✅ | ➖ | ✅ `@pikuscope autofix` |
+| AI-slop detection | ✅ | ➖ | ✅ summary warning |
+| Duplicate-root-cause merging (editor stage) | ➖ | ➖ | ✅ |
 | Poem 🐇 | ✅ | ➖ | ✅ (opt-in, off by default) |
+
+Platform-level items (SaaS dashboards, Slack/Discord agents, IDE extensions, Jira/Linear,
+hosted security scanning, sandboxed test execution) are out of scope for this repo; the
+review-bot surface above is the parity target.
 
 ## Benchmark: t3code re-review
 
