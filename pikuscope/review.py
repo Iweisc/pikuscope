@@ -51,6 +51,7 @@ class ReviewResult:
     suggested_description: str = ""
     suggested_labels: list[str] = field(default_factory=list)
     effort_estimate: str = ""
+    slop_signals: str = ""
     skipped_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,6 +248,7 @@ Output ONLY JSON:
   "suggested_description": "markdown PR description: what/why/how, testing notes",
   "suggested_labels": ["bug"|"enhancement"|"refactor"|"docs"|"chore"|"performance"|"security"|...],
   "effort_estimate": "review effort 1-5 with one-line justification, e.g. '2 (small, focused change in one file)'",
+  "slop_signals": "\\"\\" normally; if the PR shows strong signs of low-effort AI-generated content (boilerplate description mismatching the diff, vestigial/duplicated code, nonsensical comments), one short sentence naming the evidence",
   "poem": ""
 }
 """
@@ -382,6 +384,16 @@ class Reviewer:
             except Exception:  # noqa: BLE001 — linters are best-effort
                 lint_hints = []
 
+        guidelines = ""
+        if self.cfg.code_guidelines:
+            try:
+                from .knowledge import collect_guidelines
+
+                guidelines = collect_guidelines(self.ctx, self.cfg.guideline_patterns)
+            except Exception:  # noqa: BLE001
+                guidelines = ""
+        self._guidelines = guidelines
+
         with ThreadPoolExecutor(max_workers=4) as pool:
             fut_summary = pool.submit(self._summarize, pr, fds)
             note(f"finding pass over {len(reviewable)} files")
@@ -397,6 +409,7 @@ class Reviewer:
         result.suggested_description = summary.get("suggested_description", "")
         result.suggested_labels = summary.get("suggested_labels", []) or []
         result.effort_estimate = summary.get("effort_estimate", "")
+        result.slop_signals = summary.get("slop_signals", "") if self.cfg.slop_detection else ""
         result.poem = summary.get("poem", "") if self.cfg.poem else ""
 
         # thresholds + anchoring validation
@@ -512,6 +525,12 @@ class Reviewer:
                 if learnings
                 else ""
             )
+            guide_note = (
+                "\n# Repository coding guidelines (enforce violations introduced by this diff)\n"
+                + self._guidelines
+                if getattr(self, "_guidelines", "")
+                else ""
+            )
             other_files = [f.path for f in fds if f not in batch]
             other_note = (
                 "\nOther files changed in this PR (reviewed separately, listed for context): "
@@ -529,7 +548,7 @@ class Reviewer:
                         for h in relevant
                     )
             user = (
-                f"{self._pr_header(pr)}\n\n{profile_note}{learn_note}\n\n"
+                f"{self._pr_header(pr)}\n\n{profile_note}{learn_note}{guide_note}\n\n"
                 f"# Repository layout\n{tree}\n{other_note}{lint_note}\n\n# Files to review\n\n"
                 + "\n\n".join(self._file_block(fd) for fd in batch)
             )

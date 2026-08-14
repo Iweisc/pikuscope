@@ -38,6 +38,8 @@ def render_summary_comment(result: ReviewResult, incremental_note: str = "") -> 
         parts.append("\n</details>")
     if result.effort_estimate:
         parts.append(f"\n**Estimated review effort:** {result.effort_estimate}")
+    if result.slop_signals:
+        parts.append(f"\n> [!WARNING]\n> 🚮 Possible AI slop: {result.slop_signals}")
     if result.suggested_labels:
         parts.append("**Suggested labels:** " + ", ".join(f"`{l}`" for l in result.suggested_labels))
     if result.skipped_files:
@@ -54,7 +56,7 @@ def render_summary_comment(result: ReviewResult, incremental_note: str = "") -> 
     return "\n".join(parts)
 
 
-def render_finding_comment(f: Finding) -> str:
+def render_finding_comment(f: Finding, ai_prompt: bool = True) -> str:
     badge = SEVERITY_BADGE.get(f.severity, f.severity)
     parts = [f"**{badge}** · `{f.category}` · **{f.title}**\n"]
     parts.append(f.body)
@@ -62,6 +64,19 @@ def render_finding_comment(f: Finding) -> str:
         parts.append("\n```suggestion")
         parts.append(f.suggestion.rstrip("\n"))
         parts.append("```")
+    if ai_prompt:
+        loc = f"{f.path}:{f.start_line}" + (f"-{f.end_line}" if f.end_line != f.start_line else "")
+        agent_prompt = (
+            f"In {loc}, address this review finding: {f.title}. "
+            f"{f.failure_scenario or ''} "
+            "Apply the fix described above, keeping the surrounding code style, then verify the "
+            "change compiles and existing behavior is preserved."
+        )
+        parts.append(
+            "\n<details>\n<summary>🤖 Prompt for AI agents</summary>\n\n```\n"
+            + agent_prompt.strip()
+            + "\n```\n</details>"
+        )
     parts.append("\n<sub>🔬 pikuscope</sub>")
     return "\n".join(parts)
 

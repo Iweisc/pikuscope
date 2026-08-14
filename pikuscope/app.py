@@ -104,15 +104,14 @@ class App:
 
     # ---------- actions ----------
 
-    def review_pr(self, repo_full: str, number: int, incremental: bool = True) -> None:
+    def review_pr(self, repo_full: str, number: int, incremental: bool = True,
+                  forced: bool = False) -> None:
         repo = Repo(self.gh, repo_full)
         pr = repo.pr(number)
-        if pr.get("draft"):
-            return
         existing = self._summary_comment(repo, number)
         prev_sha = None
         if existing:
-            if PAUSED_MARK in existing["body"]:
+            if PAUSED_MARK in existing["body"] and not forced:
                 return
             m = REVIEWED_RE.search(existing["body"])
             prev_sha = m.group(1) if m else None
@@ -127,10 +126,12 @@ class App:
             note = f"Incremental review: commits `{prev_sha[:7]}..{head[:7]}`"
         else:
             diff_text = repo.pr_diff(number)
-        if prev_sha == head:
+        if prev_sha == head and not forced:
             return  # nothing new
 
         ctx, reviewer, store = self._ctx_and_reviewer(repo, pr)
+        if not forced and not reviewer.cfg.should_auto_review(pr):
+            return
         changed = [l[6:] for l in diff_text.splitlines() if l.startswith("+++ b/")]
         learnings = store.for_paths(changed)
         result = reviewer.review(pr, diff_text, learnings=learnings)
@@ -140,16 +141,31 @@ class App:
         self._post_summary(repo, number, body)
         comments = []
         for f in result.findings:
-            c: dict = {"path": f.path, "body": render_finding_comment(f), "side": "RIGHT",
-                       "line": f.end_line}
+            c: dict = {"path": f.path, "body": render_finding_comment(f, reviewer.cfg.ai_agent_prompts),
+                       "side": "RIGHT", "line": f.end_line}
             if f.end_line != f.start_line:
                 c["start_line"] = f.start_line
                 c["start_side"] = "RIGHT"
             comments.append(c)
-        if comments:
+        severities = {f.severity for f in result.findings}
+        event = "COMMENT"
+        if reviewer.cfg.request_changes_workflow and severities & {"critical", "major"}:
+            event = "REQUEST_CHANGES"
+        if comments or event != "COMMENT":
             repo.gh.post(
                 f"repos/{repo.full}/pulls/{number}/reviews",
-                {"commit_id": head, "event": "COMMENT", "body": "", "comments": comments},
+                {"commit_id": head, "event": event, "body": "", "comments": comments},
+            )
+        if reviewer.cfg.commit_status:
+            failed = bool(severities & set(reviewer.cfg.fail_on))
+            repo.gh.post(
+                f"repos/{repo.full}/statuses/{head}",
+                {
+                    "state": "failure" if failed else "success",
+                    "context": "pikuscope/review",
+                    "description": f"{len(result.findings)} finding(s)"
+                    + (f"; blocked by {'/'.join(sorted(severities & set(reviewer.cfg.fail_on)))}" if failed else ""),
+                },
             )
 
     def handle_comment(self, repo_full: str, number: int, comment: dict[str, Any],
@@ -203,6 +219,47 @@ class App:
             scope = "**"
             store.add(args, scope=scope, source="chat")
             reply(f"🧠 Learned: _{args}_ (scope: `{scope}`)")
+        elif cmd == "generate unit tests":
+            from .finishing import generate_unit_tests
+
+            ctx, reviewer, store = self._ctx_and_reviewer(repo, pr)
+            tests = generate_unit_tests(self.llm, ctx, repo.pr_diff(number))
+            if not tests:
+                reply("Nothing testable in this PR's changes.")
+            else:
+                lines = ["## Suggested unit tests\n"]
+                for t in tests:
+                    lines.append(f"**`{t['path']}`** ({t.get('mode', 'create')})\n```\n{t['content'][:4000]}\n```")
+                reply("\n".join(lines))
+        elif cmd == "autofix":
+            from .finishing import autofix
+            from .review import Finding
+
+            # reconstruct suggestions from our latest review comments on this PR
+            import re as _re
+
+            findings = []
+            for c in repo.pr_review_comments(number):
+                body = c.get("body") or ""
+                if "pikuscope" not in body or c.get("in_reply_to_id"):
+                    continue
+                m = _re.search(r"```suggestion\n(.*?)```", body, _re.DOTALL)
+                if not m:
+                    continue
+                findings.append(
+                    Finding(
+                        path=c.get("path", ""),
+                        start_line=c.get("start_line") or c.get("line") or 0,
+                        end_line=c.get("line") or 0,
+                        severity="minor", category="bug",
+                        title="autofix", body="", suggestion=m.group(1).rstrip("\n"),
+                    )
+                )
+            committed = autofix(repo, pr, [f for f in findings if f.start_line])
+            reply(
+                f"🔧 Committed {len(committed)} autofix change(s) to `{pr['head']['ref']}`."
+                if committed else "No committable suggestions found to apply."
+            )
         elif cmd == "generate docstrings":
             ctx, reviewer, store = self._ctx_and_reviewer(repo, pr)
             docs = generate_docstrings(self.llm, ctx, repo.pr_diff(number))

@@ -32,6 +32,8 @@ HELP_TEXT = """## pikuscope commands
 | `@pikuscope full review` | Full re-review of the PR from scratch |
 | `@pikuscope summary` | Regenerate the PR summary comment |
 | `@pikuscope generate docstrings` | Add docstrings for functions changed in this PR |
+| `@pikuscope generate unit tests` | Generate unit tests for the changed code |
+| `@pikuscope autofix` | Commit the committable suggestions to the PR branch |
 | `@pikuscope generate title` | Suggest a PR title and description |
 | `@pikuscope resolve` | Resolve all pikuscope review threads |
 | `@pikuscope pause` / `@pikuscope resume` | Pause/resume automatic reviews on this PR |
@@ -54,8 +56,9 @@ def parse_command(body: str, bot_name: str = "pikuscope") -> tuple[str, str] | N
         return None
     rest = m.group(1).strip()
     low = rest.lower()
-    for cmd in ("full review", "generate docstrings", "generate title", "review", "summary",
-                "resolve", "pause", "resume", "ignore", "help", "remember", "configuration"):
+    for cmd in ("full review", "generate docstrings", "generate unit tests", "generate title",
+                "review", "summary", "resolve", "pause", "resume", "ignore", "help",
+                "remember", "autofix", "configuration"):
         if low == cmd or low.startswith(cmd + " ") or low.startswith(cmd + "\n"):
             return cmd, rest[len(cmd):].strip()
     return ("chat", rest) if rest else ("help", "")
