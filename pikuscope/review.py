@@ -147,6 +147,13 @@ You have tools over the repository at the PR's head commit. Use them:
 - Check sibling implementations and platform variants (ios/android/web copies) for behavior the \
 change may break or forget to update.
 - Verify claimed helpers/types actually behave as you assume (read their definitions).
+- MANDATORY consequence tracing: for EVERY changed condition, parameter, or flag (navigation \
+push/replace, effect dependencies, guards, defaults), read the definitions of the symbols \
+involved — route configs including beforeLoad/redirect handlers, called helpers, dispatched \
+actions — and enumerate each concrete app state that can reach the changed code (nested \
+sub-routes, second windows, background tabs, rapid repeat triggers, mid-flight async), then \
+verify the behavior for EACH state, not just the typical one. Multi-hop interactions (change \
+here + redirect there = user-visible loss) are exactly what lazy reviewers miss.
 Also hunt for what the diff does NOT change but should have: other call sites needing the same \
 fix, duplicated logic copies, related config.
 
@@ -155,6 +162,11 @@ fix, duplicated logic copies, related config.
 - Minor-but-real defects count: senior reviewers DO flag needless effect re-subscription, \
 overbroad string matching, missing cleanup, silently swallowed errors, subtle navigation/history \
 misbehavior. Report them with severity "minor".
+- If the PR adds or updates tests: check the new code's branches/subtypes are actually covered; \
+report concrete uncovered branches (category "tests"). This is not boilerplate when you name \
+the specific untested paths.
+- If a comment/docstring the diff adds or modifies (or that directly describes changed code) \
+contradicts the actual behavior, report the mismatch (category "docs").
 - Pre-existing defects ONLY if the diff touches those exact lines (mark severity honestly).
 
 ## Do NOT report
