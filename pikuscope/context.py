@@ -98,7 +98,7 @@ class ApiRepoContext(RepoContext):
 def ensure_checkout(clone_dir: str | Path, full_name: str, sha: str,
                     pr_number: int | None = None) -> GitRepoContext:
     """Maintain a bare-ish clone and produce a worktree at `sha`."""
-    clone_dir = Path(clone_dir)
+    clone_dir = Path(clone_dir).resolve()
     repo_dir = clone_dir / "repo.git"
     if not repo_dir.exists():
         clone_dir.mkdir(parents=True, exist_ok=True)
@@ -108,16 +108,29 @@ def ensure_checkout(clone_dir: str | Path, full_name: str, sha: str,
             check=True, capture_output=True,
         )
     wt = clone_dir / "wt" / sha[:12]
-    if not (wt / ".git").exists() and not (wt.exists() and any(wt.iterdir()) if wt.exists() else False):
+    if not (wt / ".git").exists():
         have = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
                               cwd=repo_dir, capture_output=True)
         if have.returncode != 0:
-            refspec = f"refs/pull/{pr_number}/head" if pr_number else sha
-            subprocess.run(["git", "fetch", "origin", refspec],
-                           cwd=repo_dir, check=True, capture_output=True)
+            refspecs = [sha]
+            if pr_number:
+                refspecs = [f"refs/pull/{pr_number}/head", sha]
+            fetched = False
+            for rs in refspecs:
+                r = subprocess.run(["git", "fetch", "origin", rs],
+                                   cwd=repo_dir, capture_output=True)
+                ok = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+                                    cwd=repo_dir, capture_output=True)
+                if r.returncode == 0 and ok.returncode == 0:
+                    fetched = True
+                    break
+            if not fetched:
+                raise RuntimeError(f"cannot fetch commit {sha} (pr={pr_number})")
         wt.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "worktree", "add", "--detach", str(wt), sha],
-                       cwd=repo_dir, check=True, capture_output=True)
+        proc = subprocess.run(["git", "worktree", "add", "--detach", str(wt), sha],
+                              cwd=repo_dir, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"worktree add failed: {proc.stderr[-500:]}")
     return GitRepoContext(wt)
 
 
