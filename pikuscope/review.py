@@ -230,7 +230,11 @@ unusual-but-legal shapes from SDKs — read the SDK/type definitions), and check
 - API contract misuse: wrong argument order, misunderstood return values, error codes ignored, \
 misuse of library semantics (verify with search/read).
 - Cross-file consistency: callers not updated, duplicated logic diverging, exhaustiveness of \
-switches over enums/unions after adding a variant.""",
+switches over enums/unions after adding a variant.
+- Dead or inert code INTRODUCED by the diff: handlers that always no-op or can never fire, \
+fields/state written but never read, tracking enabled for cases it doesn't handle, logic \
+duplicated in parallel with an existing helper the diff should have reused, branches that are \
+always true/false. Teams fix these — report them (category "maintainability", severity minor).""",
     ),
     (
         "behavior-ux",
@@ -247,7 +251,12 @@ unsafe HTML/markdown rendering.
 - Performance on hot paths: N+1 calls, quadratic loops over unbounded data, sync work on the \
 UI thread, unnecessary re-renders of large trees.
 - Accessibility regressions in changed UI: focus traps, missing labels/roles, hover-only \
-affordances unusable on touch devices.""",
+affordances unusable on touch devices.
+- Hit-testing and stacking of changed UI: absolutely-positioned or z-indexed elements that \
+occlude click targets (missing pointer-events-none), overlapping interactive areas, \
+touch-target size collapses.
+- Resource accounting on failure paths: slots/quotas/counters reserved before an operation \
+that can fail, never released on the failure branch.""",
     ),
 ]
 
