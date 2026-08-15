@@ -59,3 +59,20 @@ claims), added to the verifier + 5 repo learnings. Re-run on the 5 affected PRs:
 | 4967 | sync error-banner clear on paste | gone; await-window variant (the real bug class) still flagged |
 
 Density also fell to 4–8 findings/PR on these medium PRs (editor calibration).
+
+## v6.1: distinct-scenario editor (2026-08-15)
+
+The v6 density cap trimmed some valid minors (v6-core: 78.9% valid recall on the core 15).
+v6.1 exempts findings with distinct concrete failure scenarios from merging/trimming.
+Measured on core-15 + the 5 FP PRs together (20 PRs):
+
+| metric | v5 (60-PR partial) | v6.1 (20-PR core+FP) |
+|---|---|---|
+| valid-only recall | 63.9% | **80.6%** |
+| FP avoid (overall) | 53.8% | **92.9%** |
+| FP avoid (factual) | 75.0% | **100%** |
+| FP avoid (intent) | 30.0% | **85.7%** |
+| findings/PR | 7.0 | **5.1** |
+| valid lost to verifier | 3 | 1 |
+
+v6.1 is the shipped default configuration.
