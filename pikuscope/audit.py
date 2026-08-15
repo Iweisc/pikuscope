@@ -27,6 +27,12 @@ by investigating the code at the PR head commit with your tools. Review bots are
 wrong: they misread guards, miss handling elsewhere, flag intentional behavior, or invent \
 failure paths that cannot occur.
 
+Before asserting anything about a library's semantics, check the repository's PINNED versions \
+(package.json, lockfile, patches/ directory) — behavior differs across majors and this repo \
+may pin pre-release versions whose semantics differ from what you remember. When repo-specific \
+learnings are provided, they encode the maintainers' own corrections to past bot claims: weigh \
+them heavily.
+
 Verdicts:
 - "valid": the bot's claim is correct and worth acting on.
 - "valid_minor": technically correct but overstated/low-impact.
@@ -40,17 +46,24 @@ Output ONLY JSON:
 
 
 def audit_bot_comments(llm: LLMClient, ctx: RepoContext, repo: Repo, pr: dict[str, Any],
-                       bots: set[str] | None = None, workers: int = 4) -> list[dict[str, Any]]:
+                       bots: set[str] | None = None, workers: int = 4,
+                       learnings: list[str] | None = None) -> list[dict[str, Any]]:
     bots = bots or KNOWN_BOTS
     comments = [
         c for c in repo.pr_review_comments(pr["number"])
         if c["user"]["login"] in bots and not c.get("in_reply_to_id")
     ]
     handler = make_tool_handler(ctx)
+    learn_note = (
+        "\n# Repository learnings (maintainer-confirmed facts)\n"
+        + "\n".join(f"- {l}" for l in learnings)
+        if learnings
+        else ""
+    )
 
     def one(c: dict) -> dict[str, Any]:
         user = (
-            f"# PR #{pr['number']}: {pr.get('title')}\n\n"
+            f"# PR #{pr['number']}: {pr.get('title')}\n{learn_note}\n\n"
             f"# Bot comment by {c['user']['login']} on {c.get('path')}:{c.get('line')}\n"
             f"Diff hunk:\n{(c.get('diff_hunk') or '')[-1500:]}\n\n"
             f"Claim:\n{(c.get('body') or '')[:3000]}\n\n"

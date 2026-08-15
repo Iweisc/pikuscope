@@ -141,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     au.add_argument("--effort", default=None)
     au.add_argument("--profile", default=None)
     au.add_argument("--post", action="store_true", help="reply to suspected false positives")
+    au.add_argument("--learnings", default=None, help="path to learnings.jsonl")
     au.add_argument("--json-out", default=None)
     au.set_defaults(func=cmd_audit)
 
@@ -180,12 +181,21 @@ def cmd_docstrings(args: argparse.Namespace) -> int:
 
 def cmd_audit(args: argparse.Namespace) -> int:
     from .audit import audit_bot_comments, render_audit_reply
+    from .learnings import LearningsStore
 
     gh = GitHub(cache_dir=args.cache_dir)
     repo = Repo(gh, args.repo)
     pr = repo.pr(args.pr)
     reviewer = build_reviewer(args, repo, pr)
-    audits = audit_bot_comments(reviewer.llm, reviewer.ctx, repo, pr)
+    learnings: list[str] = []
+    root = getattr(reviewer.ctx, "root", None)
+    if root is not None:
+        learnings = LearningsStore(root / reviewer.cfg.learnings_path).for_paths(["**"])
+    if args.learnings:
+        import json as _json
+
+        learnings += [_json.loads(l)["text"] for l in Path(args.learnings).read_text().splitlines()]
+    audits = audit_bot_comments(reviewer.llm, reviewer.ctx, repo, pr, learnings=learnings)
     if args.json_out:
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json_out).write_text(json.dumps(audits, indent=2))
