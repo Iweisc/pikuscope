@@ -351,13 +351,16 @@ pull request. Produce the final list a top-tier human reviewer would actually po
 
 1. MERGE duplicates/overlaps: findings sharing a root cause (same underlying defect, even if \
 anchored a few lines apart or phrased differently) become ONE finding — keep the clearest \
-anchor/body, fold unique details of the others into it.
+anchor/body, fold unique details of the others into it. Two findings share a root cause ONLY \
+if one fix resolves both; findings in the same file/theme with DIFFERENT concrete failure \
+scenarios (e.g. a boundary-match bug vs a redirect-history bug in the same handler; a missing \
+dependency vs a not-actually-shared store in the same hook) are DISTINCT — keep both, and when \
+merging a cluster preserve each distinct failure scenario in the surviving body.
 2. TRIM noise: if several minor findings restate variations of one theme, keep the strongest.
 3. DENSITY: match a respected senior reviewer's signal-to-noise. Keep ALL distinct \
-critical/major findings. For minor/nit findings, keep only those a busy maintainer would act \
-on; as a guide, a small diff (<150 changed lines) rarely warrants more than 4 total comments, \
-a medium diff more than 8, a large diff more than 12 — beyond that keep only the strongest. \
-Drop redundancy and marginal nits, never substance. Do not invent anything new.
+critical/major findings, and keep every minor with a concrete, traceable failure scenario. \
+The density guide (small diff ≲5 comments, medium ≲10, large ≲14) applies to nits, hygiene, \
+and theme-variation minors — never to distinct real defects. Do not invent anything new.
 
 Output ONLY JSON:
 {"final": [{"keep_index": int, "merge_indices": [int, ...], "revised_title": str|null, \
