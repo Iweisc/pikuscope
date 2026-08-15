@@ -201,9 +201,12 @@ def score(run_name: str, refresh: bool = False) -> None:
                 )
             # FP catches: bot finding was a false positive; did we avoid repeating it?
             if label in FP_LABELS:
+                subtype = g.get("fp_subtype", "unknown")
                 fp_analysis["fp_total"] += 1
+                fp_analysis[f"fp_{subtype}_total"] += 1
                 if not hit:
                     fp_analysis["fp_not_repeated"] += 1
+                    fp_analysis[f"fp_{subtype}_not_repeated"] += 1
                 if dropped_hit:
                     # strongest catch: we generated the same claim and struck it down
                     fp_analysis["fp_explicitly_refuted"] += 1
@@ -236,6 +239,12 @@ def score(run_name: str, refresh: bool = False) -> None:
         ),
         "fp_analysis": dict(fp_analysis),
         "fp_avoid_rate": pct(fp_analysis["fp_not_repeated"], fp_analysis["fp_total"]),
+        "fp_factual_avoid_rate": pct(
+            fp_analysis["fp_factual_not_repeated"], fp_analysis["fp_factual_total"]
+        ),
+        "fp_intent_avoid_rate": pct(
+            fp_analysis["fp_intent_not_repeated"], fp_analysis["fp_intent_total"]
+        ),
         "lost_to_verifier": stats["lost_to_verifier"],
         "lost_to_verifier_valid": stats["lost_to_verifier_valid"],
         "pikuscope_findings_total": total_piku_findings,
