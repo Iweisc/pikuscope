@@ -44,3 +44,18 @@ distinction) adopted; all runs re-judged with it.
    "one hop short" near-miss class (redirect chains, SDK shapes, sibling routes).
 4. Global LLM concurrency cap — oversubscribing the endpoint queues server-side and
    collapses throughput.
+
+## v6: intent/policy FP guards (validated 2026-08-15)
+
+Workflow-derived guard rules from the 9 bot FPs that v5 repeated (maintainer-dismissed
+claims), added to the verifier + 5 repo learnings. Re-run on the 5 affected PRs:
+
+| PR | repeated FP in v5 | v6 outcome |
+|---|---|---|
+| 1180 | truthy env check; mock-vs-GitHub config precedence (×2) | both gone |
+| 2911 | pin action `@main` (supply-chain policy) | gone; valid path-filter finding still reported |
+| 4153 | missing cwd on CLI inventory (×3); warning-vs-error taxonomy | all gone |
+| 4955 | 502/503/504→unreachable "guard bypass" | narrow claim gone (folded into broader ownership finding) |
+| 4967 | sync error-banner clear on paste | gone; await-window variant (the real bug class) still flagged |
+
+Density also fell to 4–8 findings/PR on these medium PRs (editor calibration).
