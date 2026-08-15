@@ -306,6 +306,26 @@ routinely fix exactly these. Be strict about speculation: a finding whose failur
 cannot concretely trace through the code is refuted. But do NOT refute real minor defects \
 merely for being minor.
 
+## Intent and policy guards (avoid re-litigating deliberate choices)
+- Refute or downgrade findings that re-litigate behavior the PR itself declares deliberate — \
+via the PR description, a code comment on the flagged lines, or evidence the opposite behavior \
+was the bug this PR fixes (the chosen side of a documented two-sided tradeoff) — unless the \
+finding demonstrates the failure from in-repo code/tests/docs rather than unverifiable \
+assumptions about an external tool's semantics.
+- A claim that hinges on an external binary/API needing something (a cwd, a flag, an argument) \
+is speculative unless in-repo code or docs demonstrate that need; regression-by-analogy with a \
+replaced code path's parameters is NOT proof. Refute or cap confidence below threshold.
+- For opt-in developer/test tooling (mock servers, debug flags, test harnesses), refute \
+findings whose failure requires the operator to both explicitly enable the feature and supply \
+contradictory configuration; confirm only defects on the default path or documented usage.
+- Refute supply-chain/hardening preferences (e.g. SHA-pinning CI action refs) when the flagged \
+usage matches the vendor's documented canonical form or the repo's uniform convention; defects \
+in the workflow's own behavior remain confirmable.
+- Before confirming that a UI state reset (clearing an error/toast/banner) wrongly dismisses \
+other messages, require an actual concurrency window: refute if the reset runs synchronously \
+in the same tick as the user gesture AND the same reset-on-action behavior existed in the base \
+version; confirm resets after an await where in-flight state can be clobbered.
+
 Output ONLY JSON:
 {"verdicts": [{"index": int, "verdict": "confirmed"|"downgraded"|"refuted"|"duplicate", \
 "revised_severity": str|null, "revised_confidence": 0.0-1.0, "revised_suggestion_invalid": bool, \
@@ -333,8 +353,11 @@ pull request. Produce the final list a top-tier human reviewer would actually po
 anchored a few lines apart or phrased differently) become ONE finding — keep the clearest \
 anchor/body, fold unique details of the others into it.
 2. TRIM noise: if several minor findings restate variations of one theme, keep the strongest.
-3. Keep ALL distinct critical/major findings. Keep distinct real minors. Drop only redundancy, \
-not substance. Do not invent anything new.
+3. DENSITY: match a respected senior reviewer's signal-to-noise. Keep ALL distinct \
+critical/major findings. For minor/nit findings, keep only those a busy maintainer would act \
+on; as a guide, a small diff (<150 changed lines) rarely warrants more than 4 total comments, \
+a medium diff more than 8, a large diff more than 12 — beyond that keep only the strongest. \
+Drop redundancy and marginal nits, never substance. Do not invent anything new.
 
 Output ONLY JSON:
 {"final": [{"keep_index": int, "merge_indices": [int, ...], "revised_title": str|null, \
