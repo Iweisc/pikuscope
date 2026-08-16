@@ -39,7 +39,7 @@ Output ONLY JSON: {"real": true|false, "confidence": 0.0-1.0, "reason": "concise
 """
 
 
-def verify_run(run_name: str, workers: int = 6) -> None:
+def verify_run(run_name: str, workers: int = 6, sample: int | None = None) -> None:
     llm = LLMClient.from_env()
     entries = {e["pr"]: e for e in (json.loads(l) for l in DATA.read_text().splitlines())}
     out_dir = RUNS / run_name / "novel"
@@ -61,6 +61,11 @@ def verify_run(run_name: str, workers: int = 6) -> None:
             if i not in matched_idx:
                 jobs.append((pr, i, f, entries[pr]))
 
+    if sample and len(jobs) > sample:
+        import random
+
+        rng = random.Random(42)
+        jobs = rng.sample(jobs, sample)
     print(f"{len(jobs)} novel findings to verify", file=sys.stderr)
 
     def one(job):
@@ -117,5 +122,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--sample", type=int, default=None)
     args = ap.parse_args()
-    verify_run(args.run_name, args.workers)
+    verify_run(args.run_name, args.workers, sample=args.sample)
