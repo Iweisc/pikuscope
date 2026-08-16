@@ -153,6 +153,7 @@ def score(run_name: str, refresh: bool = False, dataset: str = "dataset.jsonl") 
         pr_count += 1
         entry = entries[pr]
         rr = run[pr]
+        review_sha = rr.get("review_sha") or entry.get("review_sha")
         total_piku_findings += len(rr.get("findings", []))
         ground_by_id = {f["id"]: f for f in entry["findings"]}
         for m in matches:
@@ -161,6 +162,11 @@ def score(run_name: str, refresh: bool = False, dataset: str = "dataset.jsonl") 
                 continue
             if g.get("ci_dependent"):
                 stats["ci_dependent_skipped"] += 1
+                continue
+            if g.get("commit_id") and review_sha and g["commit_id"] != review_sha:
+                # Bot commented on a different commit of this PR; the reviewed diff
+                # may not contain that code. Out of scope for recall.
+                stats["other_commit_skipped"] += 1
                 continue
             label = g.get("reception", "unclear")
             strength = m.get("match_strength", "none")
@@ -226,6 +232,7 @@ def score(run_name: str, refresh: bool = False, dataset: str = "dataset.jsonl") 
         "prs_scored": pr_count,
         "pr_errors": stats["pr_errors"],
         "ground_total": stats["ground_total"],
+        "ground_out_of_scope_other_commit": stats["other_commit_skipped"],
         "ground_matched": stats["ground_matched"],
         "recall_overall": pct(stats["ground_matched"], stats["ground_total"]),
         "recall_by_bot": {
