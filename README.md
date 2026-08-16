@@ -79,7 +79,18 @@ review-bot surface above is the parity target.
 
 `bench/` contains a harness that measures pikuscope against the review bots active on
 [pingdotgg/t3code](https://github.com/pingdotgg/t3code) (CodeRabbit, Greptile, Cursor Bugbot,
-Macroscope) on already-merged PRs:
+Macroscope) on already-merged PRs. Headline results (full protocol and history in
+`bench/RESULTS.md`):
+
+- **80.6%** of developer-validated bot findings re-discovered on the representative set
+  (peak single-run 94.7%); 47.9% across all 104 PRs including 2k–6k-line mega-diffs.
+- **92.9% of the bots' own false positives avoided** (100% of factually-wrong ones),
+  scored against maintainer-dismissed findings.
+- **≈600 verified-real novel findings** the four bots collectively missed on the same
+  commits (85.8–94.3% adversarial-verification precision).
+- `pikuscope audit` reproduces maintainers' own disproofs of other bots' false positives.
+
+The pipeline:
 
 1. **collect** — extracts every inline bot finding + the developer interactions that followed,
    and labels each finding's reception (`valid_fixed` / `false_positive` / ...) from those
