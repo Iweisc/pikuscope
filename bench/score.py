@@ -138,6 +138,7 @@ def score(run_name: str, refresh: bool = False) -> None:
     by_bot: dict[str, Counter] = defaultdict(Counter)
     by_bot_valid: dict[str, Counter] = defaultdict(Counter)
     by_label: dict[str, Counter] = defaultdict(Counter)
+    by_era: dict[str, Counter] = defaultdict(Counter)  # early (<200) vs modern (>=200)
     fp_analysis = Counter()
     missed_examples = []
     total_piku_findings = 0
@@ -179,8 +180,10 @@ def score(run_name: str, refresh: bool = False) -> None:
             stats["ground_total"] += 1
             by_bot[bot]["total"] += 1
             by_label[label]["total"] += 1
+            era = "early(<200)" if pr < 200 else "modern(>=200)"
             if label in VALID_LABELS:
                 by_bot_valid[bot]["total"] += 1
+                by_era[era]["total"] += 1
             if dropped_hit:
                 stats["lost_to_verifier"] += 1
                 if label in VALID_LABELS:
@@ -191,6 +194,7 @@ def score(run_name: str, refresh: bool = False) -> None:
                 by_label[label]["matched"] += 1
                 if label in VALID_LABELS:
                     by_bot_valid[bot]["matched"] += 1
+                    by_era[era]["matched"] += 1
                 if m.get("candidate_index") is not None:
                     matched_candidate_keys.add((pr, int(m["candidate_index"])))
             elif is_substantive and label in VALID_LABELS:
@@ -237,6 +241,10 @@ def score(run_name: str, refresh: bool = False) -> None:
             sum(by_label[l]["matched"] for l in VALID_LABELS),
             sum(by_label[l]["total"] for l in VALID_LABELS),
         ),
+        "recall_valid_by_era": {
+            e: {"recall": pct(c["matched"], c["total"]), "n": c["total"]}
+            for e, c in sorted(by_era.items())
+        },
         "fp_analysis": dict(fp_analysis),
         "fp_avoid_rate": pct(fp_analysis["fp_not_repeated"], fp_analysis["fp_total"]),
         "fp_factual_avoid_rate": pct(
