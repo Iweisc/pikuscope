@@ -27,6 +27,10 @@ RUNS = ROOT / "bench" / "runs"
 CLONE = ROOT / "bench" / "repos" / "t3code"
 
 
+def load_entries(dataset: str) -> list[dict]:
+    return [json.loads(l) for l in (ROOT / "bench" / "data" / dataset).read_text().splitlines()]
+
+
 def pr_diff_at(repo_dir: Path, base_sha: str, review_sha: str) -> str:
     """The diff the bot reviewed: merge-base(base_sha, review_sha)..review_sha."""
     mb = subprocess.run(
@@ -103,13 +107,14 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--learnings", default=None,
                     help="path to learnings.jsonl to inject into reviews")
+    ap.add_argument("--dataset", default="dataset.jsonl")
     args = ap.parse_args()
 
     learnings: list[str] | None = None
     if args.learnings:
         learnings = [json.loads(l)["text"] for l in Path(args.learnings).read_text().splitlines()]
 
-    entries = [json.loads(l) for l in DATA.read_text().splitlines()]
+    entries = load_entries(args.dataset)
     if args.prs:
         want = {int(x) for x in args.prs.split(",")}
         entries = [e for e in entries if e["pr"] in want]

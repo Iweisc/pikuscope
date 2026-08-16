@@ -104,9 +104,10 @@ def match_pr(llm: LLMClient, entry: dict, run_result: dict) -> list[dict]:
     return matches
 
 
-def score(run_name: str, refresh: bool = False) -> None:
+def score(run_name: str, refresh: bool = False, dataset: str = "dataset.jsonl") -> None:
     llm = LLMClient.from_env()
-    entries = {e["pr"]: e for e in (json.loads(l) for l in DATA.read_text().splitlines())}
+    data_path = ROOT / "bench" / "data" / dataset
+    entries = {e["pr"]: e for e in (json.loads(l) for l in data_path.read_text().splitlines())}
     run = load_run(run_name)
     match_dir = RUNS / run_name / "matches"
     match_dir.mkdir(exist_ok=True)
@@ -271,5 +272,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--dataset", default="dataset.jsonl")
     args = ap.parse_args()
-    score(args.run_name, refresh=args.refresh)
+    score(args.run_name, refresh=args.refresh, dataset=args.dataset)
