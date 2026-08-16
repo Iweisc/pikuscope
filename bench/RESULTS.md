@@ -131,3 +131,25 @@ positives, explicitly refuting bot FPs with code evidence in audit mode, and sur
 hundreds of adversarially-verified real issues that all four bots missed. Feature
 surface is 1:1 per the README matrix, plus capabilities none of the reference bots
 have (adversarial self-verification, bot-comment auditing).
+
+## Live head-to-head: PR 2829 (open orchestrator-v2 epic, 2026-08-16)
+
+Blind pikuscope review of the 10 files carrying macroscope's latest (head-commit) review
+round on the 883-file orchestration-v2 PR — content fully blind, judged by independent
+Claude agents with repo access (`bench/runs/pr2829-blind/verdict.json`).
+
+| | macroscope (head round) | pikuscope (blind) |
+|---|---|---|
+| findings reported | 16 | 25 |
+| verified real | 7 (44%) | **20 (80%)** |
+| real findings unique to this side | 2 | **20** |
+
+- pikuscope's unique real findings include two security-grade permission bypasses
+  (ACP auto-accept-edits auto-approves command execution; OpenCode resume drops
+  permission rules), silent multi-file data loss in Codex `apply_patch`, and a
+  wrong-model-execution bug — all absent from macroscope's round.
+- Judges refuted 9/16 macroscope findings by deeper tracing (style-only claims,
+  scenarios the code prevents).
+- Honest weakness surfaced: pikuscope *generated* 5 of macroscope's 7 real bugs as
+  candidates but its editor/cap discarded them on this 127k-line scope (fixed-cap
+  overtrimming). Fix applied: the finding cap now scales with review scope.

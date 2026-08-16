@@ -500,7 +500,10 @@ class Reviewer:
         if len(final) > 1:
             note(f"editing {len(final)} confirmed findings")
             final = self._edit_final(final, dropped)
-        result.findings = final[: self.cfg.max_findings]
+        # Scale the cap with review scope: a fixed cap on very large diffs forces the
+        # editor to discard verified-real findings (measured on t3code PR 2829).
+        cap = max(self.cfg.max_findings, min(60, 4 * len(reviewable)))
+        result.findings = final[:cap]
         result.dropped = dropped
         return result
 
