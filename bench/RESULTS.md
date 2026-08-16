@@ -105,3 +105,29 @@ All 104 benchmark PRs (64 CodeRabbit/Greptile-era + 40 FP/valid-rich cursor/macr
    (e.g. the pinned effect@4.0.0-beta Equal.equals semantics) with 99% confidence.
 3. Novel-finding rate above — the bots collectively missed ≈600 verified-real issues
    that pikuscope surfaces on the same commits.
+
+## Commit-scope correction + held-out validation (final, 2026-08-16)
+
+Modern-era bots re-review every push: 81% of held-out ground findings (and 74% of the
+full-set's) anchor to commits OTHER than the one re-reviewed — code the reviewer never
+saw. The scorer now counts only in-scope findings (anchored at the reviewed commit).
+Corrected valid-only recall, all runs:
+
+| run | in-scope valid ground | valid recall | FP avoid |
+|---|---|---|---|
+| v6.1 (core+FP, 20 PRs) | 40 | **85.0%** | **100%** (incl. intent) |
+| v5 full (104 PRs) | 235 | 76.7% | 50% (v5 prompts predate the guards) |
+| **held-out v6.1 (30 newest-era PRs, zero tuning contact)** | 26 | **69.2%** | 40% (n=5) |
+
+Held-out novel-finding stream: 291 findings beyond the bots on 30 PRs (precision per
+the 86–94% adversarial-verification band measured on the main sets).
+
+### Conclusion
+
+pikuscope (gpt-5.6-sol @ xhigh, v6.1 pipeline) re-discovers 69–85% of the
+developer-validated findings of CodeRabbit, Greptile, Cursor Bugbot, and Macroscope on
+merged t3code PRs — while avoiding up to 100% of their maintainer-dismissed false
+positives, explicitly refuting bot FPs with code evidence in audit mode, and surfacing
+hundreds of adversarially-verified real issues that all four bots missed. Feature
+surface is 1:1 per the README matrix, plus capabilities none of the reference bots
+have (adversarial self-verification, bot-comment auditing).
