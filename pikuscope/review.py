@@ -346,8 +346,10 @@ Prefer precision over volume. Output ONLY JSON: {"paths": ["path1", ...]} (max 8
 repo paths only, changed files themselves excluded).
 """
 
-EDITOR_SYSTEM = """You are the final editor of a code review. Input: verified findings for one \
-pull request. Produce the final list a top-tier human reviewer would actually post:
+EDITOR_SYSTEM = """You are the final editor of a code review. Input: findings that have ALREADY \
+been adversarially verified as real — your job is to merge and organize, NOT to re-litigate \
+whether they deserve posting. Every distinct verified root cause you drop is a real bug the \
+team never hears about. Produce the final list a top-tier human reviewer would actually post:
 
 1. MERGE duplicates/overlaps: findings sharing a root cause (same underlying defect, even if \
 anchored a few lines apart or phrased differently) become ONE finding — keep the clearest \
@@ -360,7 +362,10 @@ merging a cluster preserve each distinct failure scenario in the surviving body.
 3. DENSITY: match a respected senior reviewer's signal-to-noise. Keep ALL distinct \
 critical/major findings, and keep every minor with a concrete, traceable failure scenario. \
 The density guide (small diff ≲5 comments, medium ≲10, large ≲14) applies to nits, hygiene, \
-and theme-variation minors — never to distinct real defects. Do not invent anything new.
+and theme-variation minors — never to distinct real defects. On very large scopes (a new \
+subsystem, thousands of changed lines) the number of real defects grows with the code: keeping \
+40+ verified findings on a 100k-line diff is CORRECT, trimming them to look tidy is not. \
+Do not invent anything new.
 
 Output ONLY JSON:
 {"final": [{"keep_index": int, "merge_indices": [int, ...], "revised_title": str|null, \
@@ -539,8 +544,13 @@ class Reviewer:
             seen.add(keep)
             merged = [int(x) for x in item.get("merge_indices", []) if isinstance(x, (int, float))]
             for mi in merged:
-                if 0 <= mi < len(findings):
+                if 0 <= mi < len(findings) and mi != keep and mi not in seen:
                     seen.add(mi)
+                    m = findings[mi]
+                    # keep an audit trail: absorbed findings must not vanish
+                    m.verify_verdict = "merged"
+                    m.verify_reason = f"absorbed into kept finding: {f.title[:120]}"
+                    dropped.append(m)
             if item.get("revised_title"):
                 f.title = str(item["revised_title"])[:200]
             if item.get("revised_body"):

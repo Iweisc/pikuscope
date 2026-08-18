@@ -178,7 +178,7 @@ def score(run_name: str, refresh: bool = False, dataset: str = "dataset.jsonl") 
                 di = int(m["candidate_index"]) - len(rr.get("findings", []))
                 dropped_list = rr.get("dropped", [])
                 if 0 <= di < len(dropped_list):
-                    dup_of_reported = dropped_list[di].get("verify_verdict") == "duplicate"
+                    dup_of_reported = dropped_list[di].get("verify_verdict") in ("duplicate", "merged")
             hit = strength in ("exact", "partial") and (not was_dropped or dup_of_reported)
             dropped_hit = strength in ("exact", "partial") and was_dropped and not dup_of_reported
             bot = g["bot"]

@@ -150,6 +150,15 @@ Claude agents with repo access (`bench/runs/pr2829-blind/verdict.json`).
   wrong-model-execution bug — all absent from macroscope's round.
 - Judges refuted 9/16 macroscope findings by deeper tracing (style-only claims,
   scenarios the code prevents).
-- Honest weakness surfaced: pikuscope *generated* 5 of macroscope's 7 real bugs as
-  candidates but its editor/cap discarded them on this 127k-line scope (fixed-cap
-  overtrimming). Fix applied: the finding cap now scales with review scope.
+- Honest weakness surfaced: pikuscope *generated* 5 of macroscope's 7 real bugs and its
+  verifier confirmed them (deduping copies against canonical twins in the 143-finding
+  verified set) — but the **editor stage** then compressed 143 verified findings to 25
+  under its "senior reviewer density" guidance and cut those canonical twins. A second
+  bug compounded it: findings the editor absorbed via merges were not recorded in the
+  run artifact at all (0 audit entries for ~118 editor-processed findings).
+  Fixes applied: (a) the editor is now told its input is pre-verified — merge and
+  organize, never re-litigate volume; keeping 40+ verified findings on a 100k-line diff
+  is correct; (b) every editor-absorbed finding is recorded in `dropped` with verdict
+  `merged` and its absorbing finding; (c) the post-editor cap scales with scope
+  (secondary — the earlier commit blamed this cap alone, which was wrong: the cap
+  likely never triggered; the editor did the trimming).
